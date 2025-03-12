@@ -7,8 +7,8 @@ import './TextCombinerExecutor';
 import './ConditionalExecutor';
 import './ApiCallExecutor';
 import './MarkdownOutputExecutor';
-import './StaticTextExecutor';
-import './ImageTextLlmExecutor'; // Add our new executor
+import './ImageTextLlmExecutor';
+import './TextstoreExecutor'; // Add the TextstoreExecutor
 
 // Export the registry API - only need this once
 export * from './NodeExecutorRegistry';

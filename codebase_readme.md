@@ -226,6 +226,77 @@ API client for Ollama with support for:
 - Syncs with localStorage
 - Handles system preference
 
+## Node System Architecture
+
+### 1. Node Architecture Overview
+
+The node system in Clara allows for creating workflows that process data through a series of connected steps:
+
+- **Node Components**: Visual UI representation (`/src/components/appcreator_components/nodes/`)
+- **Node Executors**: Logic for executing nodes (`/src/nodeExecutors/`)
+- **Node Registry**: Central registry of available nodes (`/src/components/appcreator_components/nodes/NodeRegistry.tsx`)
+- **Execution Engine**: System that runs workflows (`/src/ExecutionEngine.ts`)
+- **Node CLI Tool**: Command-line tool for creating and managing nodes (`/tools/node-cli.js`)
+
+### 2. Built-in Node Types
+
+- **TextInputNode**: Entry point for text input
+- **ImageInputNode**: Entry point for image input
+- **LLMPromptNode**: Process text with AI models
+- **TextOutputNode**: Display text output
+- **ConditionalNode**: Branch flow based on conditions
+- **ApiCallNode**: Make external HTTP calls
+- **TextCombinerNode**: Combine text from multiple sources
+- **TextstoreNode**: Store and provide text without input
+- **ImageTextLlmNode**: Process images and text with multimodal models
+
+### 3. Custom Node Creation
+
+Clara includes a CLI tool for creating, listing, and deleting custom nodes:
+
+```javascript
+// Create a node interactively
+node tools/node-cli.js create --interactive
+
+// Create specific node
+node tools/node-cli.js create -n "My Node" -t process
+
+// List all custom nodes
+node tools/node-cli.js list
+
+// Delete a node
+node tools/node-cli.js delete myNodeNode
+
+// Validate node integrity
+node tools/node-cli.js validate
+```
+
+### 4. Node Executor Registry
+
+The system uses a registry pattern to manage node executors:
+
+```typescript
+// Register a node executor
+registerNodeExecutor('myNodeType', {
+  execute: async (context) => {
+    // Implementation
+  }
+});
+
+// Get registered node types
+const nodeTypes = getRegisteredNodeTypes();
+```
+
+### 5. Execution Flow
+
+When a workflow runs, the execution engine:
+
+1. Builds an execution plan from nodes and edges
+2. Identifies nodes ready to execute (no pending inputs)
+3. Executes ready nodes and stores outputs
+4. Passes outputs to connected nodes
+5. Repeats until all nodes have executed or reached a deadlock
+
 ## Styling
 
 The application uses Tailwind CSS with a custom color scheme:
@@ -244,6 +315,23 @@ Common utility classes:
 - `glassmorphic`: Glass-like effect with backdrop blur
 - `scrollbar-thin`: Custom scrollbar styling
 - `animate-fadeIn`: Smooth fade-in animation
+
+## Troubleshooting Common Issues
+
+### Node Creation Issues
+- **Node not appearing in sidebar**: Ensure the node is properly registered in NodeRegistry.tsx
+- **Executor not running**: Check that the executor is imported in nodeExecutors/index.tsx
+- **Missing executor error**: Run `npm run node-cli validate` to check node integrity
+
+### Node Execution Issues
+- **"Unsupported node type" error**: Make sure the executor is properly registered
+- **Missing node outputs**: Check that the executor correctly calls `updateNodeOutput`
+- **Flow execution fails**: Use the debug panel to inspect the execution plan
+
+### Image Processing Issues
+- **Images not loading**: Check that image data is properly encoded as base64
+- **Model compatibility**: Ensure you're using a model that supports image processing (like llava)
+- **Large image issues**: Consider resizing or compressing images before processing
 
 ## Best Practices
 
@@ -272,4 +360,4 @@ Common utility classes:
 Key configuration options:
 - `MAX_CONTEXT_MESSAGES`: 20 messages
 - `MAX_IMAGE_SIZE`: 10MB
-- Model image support configuration in localStorage
+- `NODE_CLI_CONFIG`: Located at project root in node-cli-config.json

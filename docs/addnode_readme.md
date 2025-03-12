@@ -6,11 +6,12 @@ This document provides a comprehensive guide on how to add new node types to the
 1. [Introduction](#introduction)
 2. [Node Architecture](#node-architecture)
 3. [Step-by-Step Guide](#step-by-step-guide)
-4. [Testing and Debugging](#testing-and-debugging)
-5. [Example: Adding an Image+Text LLM Node](#example-adding-an-imagetext-llm-node)
-6. [Working with Images](#working-with-images)
-7. [Common Pitfalls](#common-pitfalls)
-8. [Troubleshooting](#troubleshooting)
+4. [Using the Node CLI Tool](#using-the-node-cli-tool)
+5. [Testing and Debugging](#testing-and-debugging)
+6. [Example: Adding a Text Store Node](#example-adding-a-text-store-node)
+7. [Working with Images](#working-with-images)
+8. [Common Pitfalls](#common-pitfalls)
+9. [Troubleshooting](#troubleshooting)
 
 ## Introduction
 
@@ -164,118 +165,111 @@ import './MyCustomExecutor';
 // ...other imports
 ```
 
-### 5. Add the Node to the Tool Sidebar
+## Using the Node CLI Tool
 
-Update the `toolItems` array in `/src/components/AppCreator.tsx`:
+Clara now includes a powerful CLI tool that automates most of the work of creating, listing, and deleting custom nodes. This is now the recommended approach for managing nodes.
 
-```tsx
-import { MyIcon } from 'lucide-react';
+### Creating a Node
 
-const toolItems: ToolItem[] = [
-  // ...existing tools
-  {
-    id: 'my_custom',
-    name: 'My Custom Node',
-    description: 'Does something awesome',
-    icon: MyIcon,
-    color: 'bg-purple-500',
-    bgColor: 'bg-purple-100',
-    lightColor: '#8B5CF6',
-    darkColor: '#7C3AED',
-    category: 'function',
-    inputs: ['text'],
-    outputs: ['text']
-  }
-];
+```bash
+# Create a node interactively (recommended for beginners)
+npm run node-cli create --interactive
+
+# Create a specific node with all details provided
+npm run node-cli create -n "Text Store" -t output --inputs "" --outputs text --icon Database --color "#10B981"
 ```
 
-### 6. Update the onDrop Handler
+During interactive creation, you'll be asked for:
+- Node name
+- Type (input, process, output, function)
+- Description
+- Input types
+- Output types
+- Icon (from Lucide icons)
+- Color (hex color code)
 
-Add a case to the `onDrop` handler in `/src/components/AppCreator.tsx`:
+### Listing Nodes
 
-```tsx
-switch(toolId) {
-  // ...existing cases
-  case 'my_custom': 
-    nodeType = 'myCustomNode';
-    break;
-}
+```bash
+npm run node-cli list
 ```
 
-### 7. Add Node Handling to ExecutionEngine
+This displays all custom nodes with their configurations, file paths, and properties.
 
-If your node requires special handling beyond the standard pattern, update the `executeNode` function in `/src/ExecutionEngine.ts`:
+### Deleting a Node
 
-```typescript
-switch (node.type) {
-  // ...existing cases
-  case 'myCustomNode': {
-    // Your custom execution logic
-  }
-}
+```bash
+npm run node-cli delete textstoreNode
 ```
 
-## Testing and Debugging
+This will:
+- Delete the node component and executor files
+- Update NodeRegistry.tsx to remove the node
+- Update nodeExecutors/index.tsx to remove the import
+- Remove the node from the configuration file
 
-1. **Visual Testing**: Verify your node appears in the sidebar and can be dragged onto the canvas
-2. **Configuration Testing**: Test that configuration options work correctly
-3. **Connection Testing**: Verify input and output connections work with other nodes
-4. **Execution Testing**: Test the node in a workflow to ensure it performs its function
+### Validating Nodes
 
-Debugging tools:
-- Use the built-in debug panel
-- Add the following component to your app during development:
-
-```tsx
-const NodeRegistryDebug = () => {
-  useEffect(() => {
-    // Check visual components registration
-    const nodeTypes = getAllNodeTypes();
-    console.log('Registered node types:', Object.keys(nodeTypes));
-
-    // Check executor registration
-    console.log('Node executors:', nodeTypeIds.map(id => 
-      `${id}: ${hasNodeExecutor(id)}`
-    ));
-  }, []);
-
-  return <div>Check console for debug info</div>;
-};
+```bash
+npm run node-cli validate
 ```
 
-## Example: Adding an Image+Text LLM Node
+This command checks:
+- Node file existence
+- Proper registration in NodeRegistry.tsx
+- Proper import in nodeExecutors/index.tsx
+- Configuration integrity
 
-Here's a complete example of adding an Image+Text LLM node:
+## Example: Adding a Text Store Node
 
-### 1. Visual Component (ImageTextLlmNode.tsx)
+Let's walk through an example of creating a useful TextStore node.
+
+### 1. Create via CLI
+
+```bash
+npm run node-cli create -n "Text Store" -t output --outputs text --icon Database --color "#10B981"
+```
+
+### 2. Define the TextstoreNode Component
 
 ```tsx
-import React, { useState, useEffect } from 'react';
+// filepath: /src/components/appcreator_components/nodes/TextstoreNode.tsx
+import React, { useState } from 'react';
 import { Handle, Position } from 'reactflow';
 import { useTheme } from '../../../hooks/useTheme';
-import { ImagePlus, MessageSquare } from 'lucide-react';
+import { Database } from 'lucide-react';
 
-const ImageTextLlmNode = ({ data, isConnectable }: any) => {
-  // Component implementation...
+const TextstoreNode = ({ data, isConnectable }: any) => {
+  const { isDark } = useTheme();
+  const [storedText, setStoredText] = useState(data.config?.storedText || '');
+  
+  // Update config when text changes
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setStoredText(e.target.value);
+    if (!data.config) data.config = {};
+    data.config.storedText = e.target.value;
+  };
+  
   return (
-    <div className="...">
-      {/* UI implementation */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="image-in"
-        isConnectable={isConnectable}
-        className="!bg-pink-500 !w-3 !h-3"
-        style={{ top: -6, left: '30%' }}
+    <div className="p-3 rounded-lg border shadow-md w-64">
+      {/* Node header */}
+      <div className="flex items-center gap-2 mb-2">
+        <div className="p-2 rounded-lg" style={{ background: '#10B981' }}>
+          <Database className="w-5 h-5 text-white" />
+        </div>
+        <div className="font-medium text-sm">Text Store</div>
+      </div>
+      
+      {/* Text input area */}
+      <textarea 
+        value={storedText}
+        onChange={handleTextChange}
+        placeholder="Enter text to store..."
+        rows={3}
+        className="w-full p-2 rounded border resize-none text-sm"
       />
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="text-in"
-        isConnectable={isConnectable}
-        className="!bg-purple-500 !w-3 !h-3"
-        style={{ top: -6, left: '70%' }}
-      />
+      
+      {/* Output handle only */}
       <Handle
         type="source"
         position={Position.Bottom}
@@ -288,70 +282,51 @@ const ImageTextLlmNode = ({ data, isConnectable }: any) => {
   );
 };
 
-export default ImageTextLlmNode;
+export default TextstoreNode;
 ```
 
-### 2. Node Executor (ImageTextLlmExecutor.tsx)
+### 3. Define the TextstoreExecutor
 
 ```tsx
+// filepath: /src/nodeExecutors/TextstoreExecutor.tsx
 import { registerNodeExecutor, NodeExecutionContext } from './NodeExecutorRegistry';
 
-const executeImageTextLlm = async (context: NodeExecutionContext) => {
-  const { node, inputs, updateNodeOutput } = context;
+const executeTextstoreExecutor = async (context: NodeExecutionContext) => {
+  const { node, updateNodeOutput } = context;
   
-  try {
-    // Get image and text inputs
-    const imageInput = inputs.image || inputs['image-in'] || '';
-    const textInput = inputs.text || inputs['text-in'] || '';
-    
-    // Process inputs with Ollama
-    const config = node.data.config || {};
-    const model = config.model || 'llava';
-    
-    // Make API call and return result...
-    
-  } catch (error) {
-    console.error("Error in Image-Text LLM node execution:", error);
-    return `Error: ${error instanceof Error ? error.message : String(error)}`;
+  // Get the stored text
+  const config = node.data.config || {};
+  const storedText = config.storedText || '';
+  
+  // Output the stored text
+  if (updateNodeOutput) {
+    updateNodeOutput(node.id, storedText);
   }
+  
+  return storedText;
 };
 
-registerNodeExecutor('imageTextLlmNode', {
-  execute: executeImageTextLlm
+registerNodeExecutor('textstoreNode', {
+  execute: executeTextstoreExecutor
 });
 ```
 
-### 3-7. Registration and Tool Setup
+## Testing and Debugging
+
+1. **Visual Testing**: Verify your node appears in the sidebar and can be dragged onto the canvas
+2. **Configuration Testing**: Test that configuration options work correctly
+3. **Connection Testing**: Verify input and output connections work with other nodes
+4. **Execution Testing**: Test the node in a workflow to ensure it performs its function
+
+Debugging tools:
+- Use the built-in debug panel
+- Run `npm run node-cli validate` to check node integrity
+- Add these logging statements to your executor:
 
 ```tsx
-// In NodeRegistry.tsx
-import ImageTextLlmNode from './ImageTextLlmNode';
-const NODE_TYPES = {
-  // ...others
-  imageTextLlmNode: ImageTextLlmNode
-};
-
-// In index.tsx
-import './ImageTextLlmExecutor';
-
-// In AppCreator.tsx
-const toolItems = [
-  // ...others
-  {
-    id: 'image_text_llm',
-    name: 'Image + Text LLM',
-    description: 'Process image and text with a vision model',
-    icon: ImagePlus,
-    category: 'function',
-    inputs: ['image', 'text'],
-    outputs: ['text']
-  }
-];
-
-// In onDrop handler
-case 'image_text_llm':
-  nodeType = 'imageTextLlmNode';
-  break;
+console.log('Node inputs:', inputs);
+console.log('Node config:', node.data.config);
+console.log('Executor output:', output);
 ```
 
 ## Working with Images
@@ -503,51 +478,60 @@ const handleImageUpload = (nodeId, file) => {
 
 ## Troubleshooting
 
-### Common Issues
+### Node Creation Issues
 
-1. **Node doesn't appear in sidebar:**
-   - Check that the tool is correctly added to `toolItems` array
-   - Verify the tool is being passed to `ToolSidebar` component
+1. **Node not appearing in Tools sidebar:**
+   - Run `npm run node-cli validate` to check the configuration
+   - Ensure the node has `isCustom: true` in the configuration
+   - Check that the node is properly registered in NodeRegistry.tsx
 
-2. **Node appears but doesn't work when dropped:**
-   - Check the `onDrop` handler includes your node type
-   - Ensure the node type matches between component and executor
+2. **"Unsupported node type" error:**
+   - Ensure the executor is properly registered
+   - Check that the executor is imported in nodeExecutors/index.tsx
+   - Verify node type names match between component, registry, and executor
+   - Make sure the executor logic has been added to the ExecutionEngine
 
-3. **Node doesn't execute:**
-   - Verify the executor is registered with the correct type
-   - Check console for errors during execution
-   - Ensure the node is imported in `nodeExecutors/index.tsx`
+3. **Node appears but can't be placed on canvas:**
+   - Check for JavaScript errors in console
+   - Ensure the node is properly handled in the onDrop function
+   - Verify the node type is consistent across all files
 
-4. **Node connections don't work:**
-   - Check that input/output handle IDs are correct
-   - Verify the tool definition includes correct input/output types
-   - Look at the `isValidConnection` function in AppCreator.tsx
+4. **Node executor not running:**
+   - Check that the executor is imported correctly in index.tsx
+   - Run with browser developer tools open to check for errors
+   - Ensure the ExecutionEngine can find the executor
 
-5. **Node configuration not saving:**
-   - Make sure you're updating both `data.config` and the component state
-   - Check if the object structure matches what's expected in other code
+### Integration Issues
 
-6. **Images not displaying or processing:**
-   - Check image format and encoding (base64, data URL, etc.)
-   - Verify that image data is being stored correctly in node state
-   - Ensure the correct properties are being accessed during execution
-   - Consider size limitations and possible need for compression
+1. **Connections between nodes don't work:**
+   - Check that input/output handle IDs are specified correctly
+   - Verify input/output types match between connected nodes
+   - Inspect the isValidConnection function in AppCreator.tsx
 
-### Additional Resources
+2. **Data not flowing between nodes:**
+   - Ensure the executor is returning data in the expected format
+   - Check if the updateNodeOutput function is being called
+   - Verify the node is properly handling passed inputs
 
-For more detailed debugging, add the debug components to App.tsx:
+3. **State management issues:**
+   - Make sure you're updating both React state and node.data.config
+   - Verify event propagation is properly stopped to prevent canvas events
+   - Use the React DevTools to inspect component state
 
-```tsx
-{import.meta.env.DEV && (
-  <>
-    <NodeRegistryDebug />
-    <ToolbarDebug />
-  </>
-)}
-```
+### Node CLI Tool Issues
 
-If all else fails, try the following:
-1. Clear browser cache and reload
-2. Check all console logs for errors
-3. Verify type names are consistent across all files (camelCase is standard)
-4. Restart the development server
+1. **CLI command not found:**
+   - Use `npm run node-cli <command>` to run through npm scripts
+   - Ensure you're running from the project root directory
+
+2. **Node creation fails:**
+   - Check file permissions in the target directories 
+   - Ensure Node.js and npm versions are compatible
+   - Run with the --interactive flag for more guidance
+
+3. **Validation shows errors:**
+   - Fix each reported error one by one
+   - Check for file path issues or missing files
+   - Ensure imports and exports are correctly specified
+
+By addressing these common issues, you should be able to successfully create and integrate custom nodes into the Clara-Ollama application.

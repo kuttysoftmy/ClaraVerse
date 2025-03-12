@@ -1,5 +1,6 @@
 import { OllamaClient } from './utils/OllamaClient';
 import { Node, Edge } from 'reactflow';
+import { nodeExecutorRegistry, NodeExecutor } from './nodeExecutors/NodeExecutorRegistry';
 
 export interface ExecutionPlan {
   nodes: Node[];
@@ -71,7 +72,26 @@ async function executeNode(
   context: ExecutionContext
 ): Promise<any> {
   const { nodeOutputs, ollamaClient } = context;
+  const nodeType = node.type;
+  console.log(`Executing node of type: ${nodeType}`, node);
 
+  // First check if we have a registered executor for this type
+  const executor = getNodeExecutor(nodeType);
+  if (executor) {
+    try {
+      console.log(`Using registered executor for node type: ${nodeType}`);
+      return await executor.execute({ 
+        node, 
+        inputs: nodeOutputs,
+        ...context
+      });
+    } catch (error) {
+      console.error(`Error executing node ${node.id} of type ${nodeType}:`, error);
+      throw error;
+    }
+  }
+  
+  // If no executor is registered, use built-in logic
   switch (node.type) {
     case 'textInputNode': {
       // Returns the configured text.
@@ -384,7 +404,10 @@ async function executeNode(
     }
 
     default: {
-      return `Unsupported node type: ${node.type}`;
+      console.error(`No executor found for node type: ${nodeType}`);
+      console.log('Node data:', node);
+      console.log('Available executors:', Object.keys(nodeExecutorRegistry));
+      throw new Error(`Unsupported node type: ${nodeType}`);
     }
   }
 }
@@ -514,3 +537,24 @@ export async function executeFlow(
   
   return new Map(Object.entries(nodeOutputs));
 }
+
+// Assuming there's a function like this that checks for node executors
+export const hasNodeExecutor = (nodeType: string) => {
+  // Check if we have a registered executor for this node type
+  return Boolean(getNodeExecutor(nodeType));
+};
+
+// Modify this function to be more lenient with custom nodes
+export const getNodeExecutor = (nodeType: string) => {
+  const executor = nodeExecutorRegistry[nodeType];
+  
+  if (executor) {
+    return executor;
+  }
+  
+  // Debug information to help troubleshoot
+  console.log('Available node executors:', Object.keys(nodeExecutorRegistry));
+  console.log(`Executor not found for node type: ${nodeType}`);
+  
+  return null;
+};

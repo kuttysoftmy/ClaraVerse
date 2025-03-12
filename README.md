@@ -45,6 +45,8 @@ Clara is a completely client-side AI assistant that works with Ollama running on
 - ⚡ Conditional logic nodes
 - 🌐 API call nodes
 - ✍️ Text combiner nodes
+- 📋 Text store nodes (for persistent text storage)
+- 🔧 Custom node creation via CLI
 - 🔄 Reusable app templates
 - 💻 Run apps with user inputs
 
@@ -53,6 +55,7 @@ Clara is a completely client-side AI assistant that works with Ollama running on
 - 🔍 Model management and selection
 - 📱 Responsive design
 - 🛠️ Custom API configurations
+- 🧰 Node validation and debugging tools
 
 ## 🔮 Coming Soon
 - 🎨 Image generation with Stable Diffusion
@@ -83,6 +86,29 @@ npm install
 # Start development server
 npm run dev
 ```
+
+## 🛠️ Creating Custom Nodes
+
+Clara now includes a powerful CLI tool for creating custom nodes:
+
+```bash
+# Create a new node interactively
+npm run node-cli create --interactive
+
+# Create a specific node
+npm run node-cli create -n "My Node" -t process --inputs text --outputs text --icon Activity --color "#3B82F6"
+
+# List all custom nodes
+npm run node-cli list
+
+# Delete a custom node
+npm run node-cli delete myNodeNode
+
+# Validate node integrity
+npm run node-cli validate
+```
+
+For detailed node creation documentation, see the [Add Node Guide](./docs/addnode_readme.md).
 
 ## 🐳 Installing Ollama
 

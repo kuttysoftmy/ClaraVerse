@@ -1,0 +1,20 @@
+{
+  "customNodes": [
+    {
+      "id": "textstoreNode",
+      "name": "Text Store",
+      "file": "src/components/appcreator_components/nodes/TextstoreNode.tsx",
+      "executorFile": "src/nodeExecutors/TextstoreExecutor.tsx",
+      "type": "output",
+      "inputs": [],
+      "outputs": [
+        "text"
+      ],
+      "icon": "Database",
+      "color": "#10B981",
+      "category": "output",
+      "description": "Store and output text without input",
+      "isCustom": true
+    }
+  ]
+}

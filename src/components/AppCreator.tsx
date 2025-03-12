@@ -23,6 +23,7 @@ import { OllamaProvider } from '../context/OllamaContext';
 import { appStore } from '../services/AppStore';
 import SaveAppModal from './appcreator_components/SaveAppModal';
 import ToolSidebar from './appcreator_components/ToolSidebar';
+import * as LucideIcons from 'lucide-react';
 
 interface AppCreatorProps {
   onPageChange: (page: string) => void;
@@ -147,6 +148,65 @@ const toolItems: ToolItem[] = [
   }
 ];
 
+// Update loadCustomNodes function to use dynamic import without assertions
+const loadCustomNodes = async () => {
+  try {
+    // Use dynamic import without assertions, then handle as text and parse manually
+    const response = await fetch('/node-cli-config.json')
+      .catch(() => null);
+      
+    if (!response || !response.ok) {
+      console.log("No custom nodes configuration found or couldn't be loaded");
+      return [];
+    }
+    
+    const config = await response.json();
+    if (!config || !config.customNodes) return [];
+    
+    return config.customNodes.map((node: any) => ({
+      id: node.id,
+      name: node.name,
+      description: node.description,
+      // Dynamically get icon from lucide-react
+      icon: (LucideIcons as any)[node.icon] || LucideIcons.Activity,
+      color: `bg-${getColorClass(node.color)}`,
+      bgColor: `bg-${getColorClass(node.color)}-100`,
+      lightColor: node.color,
+      darkColor: darkenColor(node.color, 0.2),
+      category: node.category || 'function',
+      inputs: node.inputs || [],
+      outputs: node.outputs || [],
+      isCustom: true
+    }));
+  } catch (err) {
+    console.warn("Error loading custom nodes:", err);
+    return [];
+  }
+};
+
+// Helper to get color class from hex
+const getColorClass = (hexColor: string) => {
+  // Simple mapping from common hex colors to Tailwind classes
+  const colorMap: Record<string, string> = {
+    '#3B82F6': 'blue-500',
+    '#10B981': 'green-500',
+    '#8B5CF6': 'purple-500',
+    '#F59E0B': 'yellow-500',
+    '#EF4444': 'red-500',
+    '#EC4899': 'pink-500',
+    '#6366F1': 'indigo-500',
+    // Add more mappings as needed
+  };
+  
+  return colorMap[hexColor] || 'gray-500'; // Default to gray
+};
+
+// Helper to darken a color for dark mode
+const darkenColor = (hex: string, factor: number = 0.2) => {
+  // Simple implementation - in production you'd want a more robust function
+  return hex; // For now just return the original color
+};
+
 const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
   const { isDark } = useTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -168,6 +228,9 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
     message: string;
     visible: boolean;
   }>({ type: 'success', message: '', visible: false });
+  
+  // Load custom tools when component mounts - MOVED THIS UP before onDrop
+  const [customTools, setCustomTools] = useState<ToolItem[]>([]);
   
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
@@ -247,7 +310,8 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
       
       if (!toolId) return;
 
-      const tool = toolItems.find(t => t.id === toolId);
+      // Check both built-in and custom tools arrays
+      const tool = [...toolItems, ...customTools].find(t => t.id === toolId);
       if (!tool) return;
 
       const position = reactFlowInstance.project({
@@ -256,33 +320,42 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
       });
 
       let nodeType: string;
-      switch(toolId) {
-        case 'text_input': 
-          nodeType = 'textInputNode'; 
-          break;
-        case 'image_input': 
-          nodeType = 'imageInputNode'; 
-          break;
-        case 'llm_prompt': 
-          nodeType = 'llmPromptNode'; 
-          break;
-        case 'text_output': 
-          nodeType = 'textOutputNode'; 
-          break;
-        case 'conditional': 
-          nodeType = 'conditionalNode'; 
-          break;
-        case 'api_call': 
-          nodeType = 'apiCallNode'; 
-          break;
-        case 'text_combiner': 
-          nodeType = 'textCombinerNode'; 
-          break;
-        case 'image_text_llm': // Add this case for our new node
-          nodeType = 'imageTextLlmNode';
-          break;
-        default: 
-          nodeType = 'textInputNode';
+
+      // Handle built-in nodes
+      if (tool.isCustom) {
+        // For custom nodes, we need to use the nodeId from the configuration
+        // This should match what's registered in NodeRegistry.tsx
+        nodeType = toolId;
+      } else {
+        // For built-in nodes, use the existing logic
+        switch(toolId) {
+          case 'text_input': 
+            nodeType = 'textInputNode'; 
+            break;
+          case 'image_input': 
+            nodeType = 'imageInputNode'; 
+            break;
+          case 'llm_prompt': 
+            nodeType = 'llmPromptNode'; 
+            break;
+          case 'text_output': 
+            nodeType = 'textOutputNode'; 
+            break;
+          case 'conditional': 
+            nodeType = 'conditionalNode'; 
+            break;
+          case 'api_call': 
+            nodeType = 'apiCallNode'; 
+            break;
+          case 'text_combiner': 
+            nodeType = 'textCombinerNode'; 
+            break;
+          case 'image_text_llm': 
+            nodeType = 'imageTextLlmNode';
+            break;
+          default: 
+            nodeType = 'textInputNode';
+        }
       }
 
       const newNode: Node = {
@@ -299,9 +372,10 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
         }
       };
 
+      console.log(`Creating node of type: ${nodeType} with ID: ${newNode.id}`);
       setNodes((nds) => nds.concat(newNode));
     },
-    [reactFlowInstance, setNodes, isDark]
+    [reactFlowInstance, setNodes, isDark, toolItems, customTools]
   );
 
   const onDragStart = (event: React.DragEvent<HTMLDivElement>, tool: ToolItem) => {
@@ -574,6 +648,27 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
     }
   }, []);
 
+  // Load custom tools when component mounts
+  useEffect(() => {
+    const fetchCustomNodes = async () => {
+      try {
+        const customNodeTools = await loadCustomNodes();
+        setCustomTools(customNodeTools);
+        console.log("Loaded custom nodes:", customNodeTools.length);
+      } catch (error) {
+        console.error("Error fetching custom nodes:", error);
+        setCustomTools([]);
+      }
+    };
+    
+    fetchCustomNodes();
+  }, []);
+
+  // Merge built-in tools with custom tools
+  const allTools = useMemo(() => {
+    return [...toolItems, ...customTools];
+  }, [customTools]);
+
   return (
     <OllamaProvider>
       <div className="flex flex-col h-screen">
@@ -589,7 +684,7 @@ const AppCreator: React.FC<AppCreatorProps> = ({ onPageChange, appId }) => {
         />
         <div className="flex flex-1 overflow-hidden">
           <ToolsSidebar
-            toolItems={toolItems}
+            toolItems={allTools}
             isDark={isDark}
             selectedTool={selectedTool}
             onDragStart={onDragStart}

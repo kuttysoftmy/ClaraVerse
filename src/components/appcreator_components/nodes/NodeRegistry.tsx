@@ -6,8 +6,8 @@ import ConditionalNode from './ConditionalNode';
 import ApiCallNode from './ApiCallNode';
 import TextCombinerNode from './TextCombinerNode';
 import MarkdownOutputNode from './MarkdownOutputNode';
-import StaticTextNode from './StaticTextNode';
 import ImageTextLlmNode from './ImageTextLlmNode';
+import TextstoreNode from './TextstoreNode';
 
 // Type for our node registry
 export interface NodeTypeDefinition {
@@ -24,9 +24,9 @@ const NODE_TYPES = {
   conditionalNode: ConditionalNode,
   apiCallNode: ApiCallNode,
   textCombinerNode: TextCombinerNode,
-  markdownOutputNode: MarkdownOutputNode,
-  staticTextNode: StaticTextNode,
-  imageTextLlmNode: ImageTextLlmNode, // Ensure this line exists
+  markdownOutputNode: MarkdownOutputNode,  
+  imageTextLlmNode: ImageTextLlmNode,
+  textstoreNode: TextstoreNode,
 };
 
 console.log("Registered node types:", Object.keys(NODE_TYPES)); // Add this debug line
