@@ -69,14 +69,16 @@
     "typescript-eslint": "^8.3.0",
     "vite": "^5.4.2",
     "vitest": "^1.6.1",
-    "wait-on": "^8.0.3",
+    "wait-on": "^8.0.3"
+  },
+  "optionalDependencies": {
     "dmg-license": "^1.0.0"
   },
   "build": {
     "appId": "com.clara-ai.app",
     "icon": "public/logo.png",
     "productName": "Clara",
-    "files": [  
+    "files": [
       "dist/**/*",
       "electron/**/*"
     ],
