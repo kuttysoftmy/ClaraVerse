@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+langchain
+langchain-community
+langchain-core
+chromadb
+langchain-chroma
+langchain-ollama
+pypdf
+python-docx
+pandas
+requests
+numpy
+faster-whisper

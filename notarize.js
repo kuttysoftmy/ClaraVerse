@@ -1,12 +1,13 @@
-const { notarize } = require('@electron/notarize');
-const path = require('path');
-const fs = require('fs');
+import { notarize } from '@electron/notarize';
+import path from 'path';
+import fs from 'fs';
 
-exports.default = async function notarizing(context) {
+export default async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
   
-  // Only notarize on macOS
-  if (electronPlatformName !== 'darwin') {
+  // Skip notarization for non-macOS platforms
+  if (electronPlatformName === 'win32' || electronPlatformName !== 'darwin') {
+    console.log('Skipping notarization for non-macOS platform');
     return;
   }
 

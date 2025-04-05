@@ -24,3 +24,5 @@ requests
 numpy
 
 faster-whisper
+
+psutil>=5.9.0

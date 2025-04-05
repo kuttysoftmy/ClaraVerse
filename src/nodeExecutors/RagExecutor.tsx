@@ -26,7 +26,7 @@ const executeRag = async (context: NodeExecutionContext) => {
     }
     
     // Search documents with the query
-    const searchResponse = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+    const searchResponse = await fetch(`http://127.0.0.1:${pythonPort}/documents/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

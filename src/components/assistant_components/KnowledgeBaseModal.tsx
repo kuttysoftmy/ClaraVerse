@@ -44,7 +44,7 @@ const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({ isOpen, onClose
 
   const loadDocuments = async (port: number) => {
     try {
-      const response = await fetch(`http://0.0.0.0:${port}/documents`);
+      const response = await fetch(`http://127.0.0.1:${port}/documents`);
       if (!response.ok) throw new Error('Failed to load documents');
       const data = await response.json();
       setDocuments(data.documents);
@@ -78,7 +78,7 @@ const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({ isOpen, onClose
         formData.append('collection_name', 'default_collection');
         formData.append('metadata', JSON.stringify({ source: 'user_upload' }));
 
-        const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/upload`, {
+        const response = await fetch(`http://127.0.0.1:${pythonPort}/documents/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -110,7 +110,7 @@ const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({ isOpen, onClose
     }
 
     try {
-      const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/${documentId}`, {
+      const response = await fetch(`http://127.0.0.1:${pythonPort}/documents/${documentId}`, {
         method: 'DELETE',
       });
 

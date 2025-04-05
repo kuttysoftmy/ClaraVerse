@@ -88,7 +88,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     // Delete old collections
     for (const doc of oldDocs) {
       try {
-        await fetch(`http://0.0.0.0:${pythonPort}/collections/${doc.collection}`, {
+        await fetch(`http://127.0.0.1:${pythonPort}/collections/${doc.collection}`, {
           method: 'DELETE'
         });
       } catch (error) {
@@ -200,7 +200,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           timestamp: timestamp
         }));
 
-        const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/upload`, {
+        const response = await fetch(`http://127.0.0.1:${pythonPort}/documents/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -230,7 +230,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
 
     try {
       // Delete the temporary collection
-      await fetch(`http://0.0.0.0:${pythonPort}/collections/${doc.collection}`, {
+      await fetch(`http://127.0.0.1:${pythonPort}/collections/${doc.collection}`, {
         method: 'DELETE'
       });
 
@@ -467,7 +467,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       // Get results from temporary collections first
       const tempResults = await Promise.all(
         temporaryDocs.map(doc =>
-          fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+          fetch(`http://127.0.0.1:${pythonPort}/documents/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -482,7 +482,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       // Only search default collection if no temp docs or RAG is explicitly enabled
       let defaultResults = { results: [] };
       if (ragEnabled || temporaryDocs.length === 0) {
-        defaultResults = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+        defaultResults = await fetch(`http://127.0.0.1:${pythonPort}/documents/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1153,7 +1153,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           setInput={setInput}
           handleSend={handleSend}
           handleKeyDown={handleKeyDown}
-          isDisabled={!client || !selectedModel || (isProcessing && !input.trim())}
+          isDisabled={!client || !selectedModel || isProcessing}
           isProcessing={isProcessing}
           onNewChat={() => handleNewChat()}
           onImageUpload={handleImageUpload}

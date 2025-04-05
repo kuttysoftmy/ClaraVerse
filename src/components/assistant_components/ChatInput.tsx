@@ -673,7 +673,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               ) : (
                 <button
                   onClick={handleSendWithReset}
-                  disabled={!input.trim() || isRecording || isTranscribing || isUploadingDocs}
+                  disabled={!input.trim() || isRecording || isTranscribing || isUploadingDocs || isDisabled}
                   className="p-2 rounded-lg bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors group relative"
                   title="Send Message"
                 >

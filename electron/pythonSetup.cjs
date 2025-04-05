@@ -7,6 +7,7 @@ const https = require('https');
 const { createWriteStream } = require('fs');
 const { createGunzip } = require('zlib');
 const { Extract } = require('tar');
+const extract = require('extract-zip');
 
 class PythonSetup {
   constructor() {
@@ -29,8 +30,16 @@ class PythonSetup {
     // Platform-specific paths
     if (process.platform === 'win32') {
       this.pythonExe = path.join(this.envPath, 'python.exe');
+      this.scriptsPath = path.join(this.envPath, 'Scripts');
+      this.libPath = path.join(this.envPath, 'Lib');
+      this.sitePackagesPath = path.join(this.libPath, 'site-packages');
+      this.pythonPath = `${this.envPath};${this.libPath};${this.sitePackagesPath};${this.scriptsPath}`;
     } else {
       this.pythonExe = path.join(this.envPath, 'bin', 'python');
+      this.scriptsPath = path.join(this.envPath, 'bin');
+      this.libPath = path.join(this.envPath, 'lib', 'python3.9');
+      this.sitePackagesPath = path.join(this.libPath, 'site-packages');
+      this.pythonPath = `${this.envPath}/lib/python3.9:${this.sitePackagesPath}`;
     }
 
     // Create app data directory if it doesn't exist
@@ -166,6 +175,31 @@ class PythonSetup {
     
     // Extract with native Node.js modules for Windows
     await this.extractZip(zipPath, this.envPath);
+
+    // Create necessary directories
+    const scriptsPath = path.join(this.envPath, 'Scripts');
+    const libPath = path.join(this.envPath, 'Lib');
+    const sitePackagesPath = path.join(libPath, 'site-packages');
+    
+    [scriptsPath, libPath, sitePackagesPath].forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    });
+
+    // Remove the _pth file that restricts imports
+    const pthFile = path.join(this.envPath, 'python39._pth');
+    if (fs.existsSync(pthFile)) {
+      fs.unlinkSync(pthFile);
+    }
+
+    // Create a new pth file with proper paths
+    const pthContent = `python39.zip
+.
+Lib
+Lib/site-packages
+Scripts`;
+    fs.writeFileSync(pthFile, pthContent);
     
     // Download and install pip
     progressCallback?.('Setting up pip...');
@@ -173,10 +207,58 @@ class PythonSetup {
     const getPipPath = path.join(this.appDataPath, 'get-pip.py');
     
     await this.downloadFile(getPipUrl, getPipPath, progressCallback);
-    await this.runCommand(this.pythonExe, [getPipPath], { 
-      shell: true,
-      progress: progressCallback 
-    });
+    
+    // Create environment object with necessary variables
+    const env = {
+      ...(process.env || {}),
+      PYTHONPATH: `${this.envPath};${libPath};${sitePackagesPath}`,
+      PATH: `${this.envPath};${scriptsPath};${(process.env?.PATH || '')}`
+    };
+    
+    // Install pip
+    try {
+      await this.runCommand(this.pythonExe, [getPipPath], { 
+        shell: true,
+        env,
+        progress: progressCallback 
+      });
+    } catch (error) {
+      this.log('Failed to install pip:', error);
+      throw new Error(`Failed to install pip: ${error.message}`);
+    }
+
+    // Clean up get-pip.py
+    if (fs.existsSync(getPipPath)) {
+      fs.unlinkSync(getPipPath);
+    }
+    
+    // Verify Python installation
+    if (!fs.existsSync(this.pythonExe)) {
+      throw new Error('Python installation failed - executable not found');
+    }
+
+    // Test Python installation and pip
+    try {
+      // Test Python version
+      await this.runCommand(this.pythonExe, ['--version'], {
+        shell: true,
+        env: {
+          ...env,
+          PYTHONPATH: this.pythonPath
+        }
+      });
+
+      // Test pip installation
+      await this.runCommand(this.pythonExe, ['-m', 'pip', '--version'], {
+        shell: true,
+        env: {
+          ...env,
+          PYTHONPATH: this.pythonPath
+        }
+      });
+    } catch (error) {
+      throw new Error(`Python/pip installation verification failed: ${error.message}`);
+    }
   }
 
   async downloadLinuxPython(progressCallback) {
@@ -237,19 +319,13 @@ class PythonSetup {
   }
 
   async extractZip(zipPath, destPath) {
-    // Simple implementation - in a real app, use a proper library like extract-zip
-    // This is just a placeholder
-    return new Promise((resolve, reject) => {
-      // We'd normally use extract-zip here
-      // For simplicity in this example, we'll just pretend it works
-      setTimeout(() => {
-        if (fs.existsSync(zipPath)) {
-          resolve();
-        } else {
-          reject(new Error('Zip file not found'));
-        }
-      }, 1000);
-    });
+    try {
+      await extract(zipPath, { dir: destPath });
+      // Clean up the zip file after successful extraction
+      fs.unlinkSync(zipPath);
+    } catch (err) {
+      throw new Error(`Failed to extract zip file: ${err.message}`);
+    }
   }
 
   async installDependencies(progressCallback) {
@@ -257,64 +333,113 @@ class PythonSetup {
       ? path.join(__dirname, '..', 'py_backend', 'requirements.txt')
       : path.join(process.resourcesPath, 'py_backend', 'requirements.txt');
     
+    const backendPath = this.isDevMode
+      ? path.join(__dirname, '..', 'py_backend')
+      : path.join(process.resourcesPath, 'py_backend');
+
+    // Set up environment with proper paths
+    const env = {
+      ...(process.env || {}),
+      PYTHONPATH: process.platform === 'win32'
+        ? `${backendPath};${this.pythonPath}`
+        : `${backendPath}:${this.pythonPath}`,
+      PATH: process.platform === 'win32' 
+        ? `${this.pythonPath};${(process.env?.PATH || '')}` 
+        : process.env.PATH,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUNBUFFERED: '1'
+    };
+
     // Upgrade pip first to ensure latest version is used
     progressCallback?.('Upgrading pip...');
-    await this.runCommand(this.pythonExe, ['-m', 'pip', 'install', '--upgrade', 'pip'], {
-      progress: progressCallback
-    });
+    try {
+      await this.runCommand(this.pythonExe, ['-m', 'pip', 'install', '--upgrade', 'pip'], {
+        progress: progressCallback,
+        env,
+        shell: true
+      });
+    } catch (error) {
+      this.log('Failed to upgrade pip:', error);
+      // Continue anyway as the base pip might still work
+    }
     
     // Install pip packages from requirements.txt with optimizations
     progressCallback?.('Installing Python dependencies...');
     
-    // Use optimization flags to speed up installation:
-    // --prefer-binary: Use pre-compiled wheels when available
-    // --no-cache-dir: Avoid caching packages (saves disk operations)
-    // Note: Removed -j flag as it's not supported in all pip versions
-    await this.runCommand(this.pythonExe, [
-      '-m', 'pip', 'install', 
-      '-r', requirementsPath,
-      '--prefer-binary',
-      '--no-cache-dir'
-    ], {
-      progress: progressCallback
-    });
+    try {
+      // Install dependencies from requirements.txt first
+      await this.runCommand(this.pythonExe, [
+        '-m', 'pip', 'install', 
+        '-r', requirementsPath,
+        '--prefer-binary',
+        '--no-cache-dir'
+      ], {
+        progress: progressCallback,
+        env,
+        shell: true
+      });
+
+      // Copy the backend files to site-packages
+      const backendFiles = ['ragDbClara.py', 'Speech2Text.py', '__init__.py'];
+      for (const file of backendFiles) {
+        const sourcePath = path.join(backendPath, file);
+        const destPath = path.join(this.sitePackagesPath, file);
+        if (fs.existsSync(sourcePath)) {
+          fs.copyFileSync(sourcePath, destPath);
+        }
+      }
+
+      // Create a .pth file to add the backend directory to Python path
+      const pthFilePath = path.join(this.sitePackagesPath, 'clara_backend.pth');
+      fs.writeFileSync(pthFilePath, backendPath);
+
+    } catch (error) {
+      this.log('Failed to install dependencies:', error);
+      throw new Error(`Failed to install Python dependencies: ${error.message}`);
+    }
   }
 
   async runCommand(command, args, options = {}) {
     return new Promise((resolve, reject) => {
-      const proc = spawn(command, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        ...options
+      // Create a new environment object with the current process.env
+      const env = {
+        ...(process.env || {}),
+        ...(options.env || {})
+      };
+
+      // Add PYTHONPATH for Windows if needed
+      if (process.platform === 'win32' && this.pythonPath) {
+        env.PYTHONPATH = this.pythonPath;
+      }
+
+      const childProcess = spawn(command, args, {
+        ...options,
+        env
       });
       
-      let stdout = '';
-      let stderr = '';
+      let output = '';
+      let errorOutput = '';
       
-      proc.stdout.on('data', (data) => {
-        const output = data.toString();
-        stdout += output;
-        options.progress?.(`${output.trim().slice(0, 50)}...`);
+      childProcess.stdout.on('data', (data) => {
+        output += data.toString();
+        options.progress?.(data.toString().trim());
       });
       
-      proc.stderr.on('data', (data) => {
-        const output = data.toString();
-        stderr += output;
-        this.log('Command stderr', { command, output });
+      childProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+        options.progress?.(`Error: ${data.toString().trim()}`);
       });
       
-      proc.on('close', (code) => {
+      childProcess.on('close', (code) => {
         if (code === 0) {
-          resolve(stdout);
+          resolve(output);
         } else {
-          const error = new Error(`Command failed with code ${code}: ${stderr}`);
-          this.log('Command failed', { command, code, stderr });
-          reject(error);
+          reject(new Error(`Command failed with code ${code}: ${errorOutput || output}`));
         }
       });
       
-      proc.on('error', (err) => {
-        this.log('Command error', { command, error: err.message });
-        reject(err);
+      childProcess.on('error', (err) => {
+        reject(new Error(`Failed to start command: ${err.message}`));
       });
     });
   }

@@ -2,17 +2,19 @@ const { notarize } = require('@electron/notarize');
 const path = require('path');
 const fs = require('fs');
 
-module.exports = async function (params) {
-  // Only notarize the app on Mac OS
-  if (process.platform !== 'darwin') {
-    console.log('Not a macOS build, skipping notarization');
+exports.default = async function notarizing(context) {
+  const { electronPlatformName, appOutDir } = context;
+  
+  // Skip notarization for non-macOS platforms
+  if (electronPlatformName === 'win32' || electronPlatformName !== 'darwin') {
+    console.log('Skipping notarization for non-macOS platform');
     return;
   }
 
   console.log('Notarizing macOS application...');
   
   // The packaging's output directory
-  const appPath = path.join(params.appOutDir, `${params.packager.appInfo.productFilename}.app`);
+  const appPath = path.join(appOutDir, `${context.packager.appInfo.productFilename}.app`);
   if (!fs.existsSync(appPath)) {
     throw new Error(`Cannot find application at: ${appPath}`);
   }

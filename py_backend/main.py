@@ -5,6 +5,7 @@ import logging
 import signal
 import sqlite3
 import traceback
+import psutil
 from datetime import datetime
 from contextlib import contextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form, Depends, Query
@@ -30,50 +31,118 @@ from Speech2Text import Speech2Text
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger("clara-backend")
 
-# Default port configuration - check environment first, then try to find available port
-DEFAULT_PORT = int(os.environ.get("CLARA_PORT", "8099"))
-PORT_RANGE_MIN = 8090
-PORT_RANGE_MAX = 8199
+# Track start time for uptime reporting
 START_TIME = datetime.now().isoformat()
 
-def find_available_port(start_port=DEFAULT_PORT, max_port=PORT_RANGE_MAX):
-    """Find an available port between start_port and max_port."""
-    for port in range(start_port, max_port + 1):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(('127.0.0.1', port))
-                return port
-            except socket.error:
-                continue
-    return None
-
-# Find an available port (use environment-provided port first)
-port = DEFAULT_PORT
-if port:
-    # Test if the provided port is available
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+def cleanup_existing_processes():
+    """Clean up any existing Python processes using our ports"""
+    current_pid = os.getpid()
+    port_range = range(8090, 8199)
+    
+    for proc in psutil.process_iter(['pid', 'name']):
         try:
-            s.bind(('127.0.0.1', port))
-        except socket.error:
-            # Port is in use, find another one
-            logger.warning(f"Port {port} is in use, finding another one")
-            port = find_available_port(PORT_RANGE_MIN, PORT_RANGE_MAX)
-else:
-    # No port specified, find one
-    port = find_available_port(PORT_RANGE_MIN, PORT_RANGE_MAX)
+            # Skip our own process
+            if proc.pid == current_pid:
+                continue
+                
+            # Get process info
+            pinfo = proc.info
+            
+            # Check if it's a Python process
+            if 'python' not in pinfo['name'].lower():
+                continue
+                
+            # Get process object for more details
+            process = psutil.Process(pinfo['pid'])
+            
+            # Check connections
+            try:
+                connections = process.connections('inet')
+                for conn in connections:
+                    if (hasattr(conn, 'laddr') and 
+                        conn.laddr.port in port_range and 
+                        conn.status == 'LISTEN'):
+                        logger.info(f"Found Python process {pinfo['pid']} using port {conn.laddr.port}")
+                        
+                        # On Windows, we need to be more aggressive with process cleanup
+                        if sys.platform == 'win32':
+                            try:
+                                # Try to kill the entire process tree
+                                parent = psutil.Process(pinfo['pid'])
+                                children = parent.children(recursive=True)
+                                
+                                # Kill children first
+                                for child in children:
+                                    logger.info(f"Terminating child process {child.pid}")
+                                    child.terminate()
+                                
+                                # Give them some time to terminate
+                                gone, alive = psutil.wait_procs(children, timeout=3)
+                                
+                                # Force kill any remaining children
+                                for child in alive:
+                                    logger.info(f"Force killing child process {child.pid}")
+                                    child.kill()
+                                
+                                # Kill parent
+                                logger.info(f"Terminating parent process {parent.pid}")
+                                parent.terminate()
+                                parent.wait(timeout=3)
+                                
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                        else:
+                            # On Unix systems, we can be more straightforward
+                            process.terminate()
+                            try:
+                                process.wait(timeout=3)
+                            except psutil.TimeoutExpired:
+                                process.kill()
+                            
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+                
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
 
-if port is None:
-    logger.error(f"No available ports found in range {PORT_RANGE_MIN}-{PORT_RANGE_MAX}")
+def verify_port_available(port):
+    """Verify if a port is truly available"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # Set SO_REUSEADDR to true to handle TIME_WAIT states
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('127.0.0.1', port))
+        return True
+    except socket.error:
+        return False
+    finally:
+        sock.close()
+
+# Clean up any existing processes first
+cleanup_existing_processes()
+
+# Get port from environment variable
+try:
+    port = int(os.environ.get("CLARA_PORT"))
+    if not port:
+        raise ValueError("CLARA_PORT environment variable is required")
+except (TypeError, ValueError) as e:
+    logger.error("Invalid or missing CLARA_PORT environment variable")
+    sys.exit(1)
+
+# Verify port availability
+if not verify_port_available(port):
+    logger.error(f"Port {port} is not available")
     sys.exit(1)
 
 # Print port info in a structured format that Electron can parse
 print(f"CLARA_PORT:{port}")
-logger.info(f"Selected port: {port}")
+logger.info(f"Using port: {port}")
 
 # Setup FastAPI
 app = FastAPI(title="Clara Backend API", version="1.0.0")
@@ -247,13 +316,23 @@ class CollectionCreate(BaseModel):
 @app.get("/")
 def read_root():
     """Root endpoint for basic health check"""
-    return {
-        "status": "ok", 
-        "service": "Clara Backend", 
-        "port": port,
-        "uptime": str(datetime.now() - datetime.fromisoformat(START_TIME)),
-        "start_time": START_TIME
-    }
+    try:
+        uptime = datetime.now() - datetime.fromisoformat(START_TIME)
+        return {
+            "status": "ok", 
+            "service": "Clara Backend", 
+            "port": port,
+            "uptime": str(uptime),
+            "start_time": START_TIME
+        }
+    except Exception as e:
+        logger.error(f"Error in root endpoint: {e}")
+        return {
+            "status": "ok",
+            "service": "Clara Backend",
+            "port": port,
+            "error": str(e)
+        }
 
 @app.get("/test")
 def read_test():
@@ -700,7 +779,9 @@ async def transcribe_audio(
 
 # Handle graceful shutdown
 def handle_exit(signum, frame):
+    """Handle graceful shutdown on exit signals"""
     logger.info(f"Received signal {signum}, shutting down gracefully")
+    cleanup_existing_processes()  # Clean up other processes
     sys.exit(0)
 
 # Register signal handlers
@@ -714,7 +795,7 @@ if __name__ == "__main__":
     # Start the server with reload=False to prevent duplicate processes
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",  # Use localhost instead of 0.0.0.0
         port=port,
         log_level="info",
         reload=False  # Change this to false to prevent multiple processes
