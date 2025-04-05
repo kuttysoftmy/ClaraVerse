@@ -8,14 +8,12 @@
   <p><strong>Privacy-First AI Assistant & Agent Builder</strong></p>
   <p>Chat with AI, create intelligent agents, and turn them into fully functional apps—powered entirely by open-source models running on your own device.</p>
 
-  [![Clara](https://img.shields.io/badge/Clara-1.0.5-FFD700.svg)](https://clara-ollama.netlify.app/)
+  [![Clara](https://img.shields.io/badge/Clara-1.2.1-FFD700.svg)](https://clara-ollama.netlify.app/)
   
-  <a href="https://clara.badboysm890.in/" target="_blank">Try Clara Online</a> | <a href="https://github.com/badboysm890/ClaraVerse/releases/tag/v0.2.0">Download Desktop App</a>
+  <a href="https://clara.badboysm890.in/" target="_blank">Try Clara Online</a> | <a href="https://github.com/badboysm890/ClaraVerse/releases/tag/v1.2.1">Download Desktop App</a>
 
   <a href="https://www.producthunt.com/posts/clara-433c5291-7639-4271-b246-8df30cbc449f?embed=true&utm_source=badge-featured&utm_medium=badge&utm_souce=badge-clara&#0045;433c5291&#0045;7639&#0045;4271&#0045;b246&#0045;8df30cbc449f" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=942765&theme=light&t=1742154003625" alt="Clara - Browser&#0045;Based&#0032;AI&#0032;for&#0032;Chat&#0044;&#0032;Agents&#0032;&#0038;&#0032;Image&#0032;Generation&#0032;Locally | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 
-
-  <a href="https://www.buymeacoffee.com/claraverse"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=claraverse&button_colour=FFDD00&font_colour=000000&font_family=Poppins&outline_colour=000000&coffee_colour=ffffff" /></a>
 </div>
 
 
@@ -90,7 +88,7 @@ Then visit http://localhost:8069 in your browser.
 ### 2. Native Desktop Apps
 
 #### macOS (Signed)
-- [Download .dmg installer](https://github.com/badboysm890/ClaraVerse/releases/tag/v1.0.4)
+- [Download .dmg installer](https://github.com/badboysm890/ClaraVerse/releases/tag/v1.2.1)
 - Universal binary (works on both Intel and Apple Silicon)
 - Fully signed and notarized for enhanced security
 

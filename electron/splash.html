@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      background: transparent;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #333;
+      line-height: 1.5;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+      text-align: center;
+      max-width: 400px;
+    }
+    .logo {
+      width: 140px;
+      height: 140px;
+      margin-bottom: 15px;
+    }
+    h2 {
+      font-size: 28px;
+      font-weight: 500;
+      margin: 10px 0;
+      color: #222;
+    }
+    .message {
+      font-size: 14px;
+      color: #666;
+      margin: 12px 0 20px 0;
+      padding: 0 15px;
+    }
+    .status {
+      margin-top: 15px;
+      font-size: 15px;
+      color: #666;
+      font-weight: 500;
+    }
+    .status.warning {
+      color: #f39c12;
+    }
+    .status.error {
+      color: #e74c3c;
+    }
+    .status.success {
+      color: #2ecc71;
+    }
+    .spinner {
+      margin-top: 15px;
+      width: 28px;
+      height: 28px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="../../assets/icons/png/256x256.png" class="logo" alt="Clara" onerror="this.style.display='none'">
+    <h2>Clara</h2>
+    <div class="message">Initializing core services. This may take some time based on your internet connection and computer performance.</div>
+    <div class="message">Disablling the Mic Access might </div>
+    <div class="status" id="status">Initializing...</div>
+    <div class="status error" id="error" style="display: none; margin-top: 8px; font-size: 13px;"></div>
+    <div class="spinner"></div>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    function updateStatus(message, type = 'info') {
+      console.log(`[Splash] ${type}: ${message}`);
+      const statusEl = document.getElementById('status');
+      const errorEl = document.getElementById('error');
+      
+      statusEl.textContent = message;
+      statusEl.className = 'status ' + type;
+
+      if (type === 'error') {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+      }
+    }
+
+    ipcRenderer.on('status', (_, data) => {
+      if (typeof data === 'string') {
+        updateStatus(data);
+      } else {
+        updateStatus(data.message, data.type);
+      }
+    });
+
+    // Log any uncaught errors
+    window.onerror = function(msg, url, line) {
+      updateStatus(`Error: ${msg} (${url}:${line})`, 'error');
+    };
+  </script>
+</body>
+</html>

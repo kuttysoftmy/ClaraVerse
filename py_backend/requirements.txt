@@ -1,0 +1,28 @@
+# Web framework
+fastapi
+uvicorn
+python-multipart  # For file uploads
+pydantic # Using 1.x for better compatibility
+
+# LangChain and related
+langchain
+langchain-community
+langchain-core
+chromadb
+langchain-chroma
+langchain-ollama
+
+# Document processing
+pypdf
+python-docx
+pandas
+
+# Utilities
+requests
+
+# IMPORTANT: Keep numpy locked at a compatible version
+numpy
+
+faster-whisper
+
+psutil>=5.9.0

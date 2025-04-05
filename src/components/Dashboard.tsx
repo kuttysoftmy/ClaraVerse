@@ -15,10 +15,12 @@ import {
   Info,
   Star,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  Server
 } from 'lucide-react';
 import { db } from '../db';
 import axios from 'axios';
+import api from '../services/api'; // Import the API service
 
 interface DashboardProps {
   onPageChange?: (page: string) => void;
@@ -29,6 +31,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
   const [isConfiguring, setIsConfiguring] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [showOllamaUrlInput, setShowOllamaUrlInput] = useState(false);
+  const [pythonStatus, setPythonStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [pythonPort, setPythonPort] = useState<number | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -40,8 +46,67 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
       } else {
         setOllamaStatus('disconnected');
       }
+      
+      // Get Python port from Electron
+      if (window.electron) {
+        try {
+          const port = await window.electron.getPythonPort();
+          setPythonPort(port);
+          console.log('Python port from Electron:', port);
+        } catch (error) {
+          console.error('Could not get Python port from Electron:', error);
+        }
+      }
+      
+      // Use the new checkPythonBackend method
+      if (window.electron) {
+        try {
+          const backendStatus = await window.electron.checkPythonBackend();
+          console.log('Python backend status:', backendStatus);
+          
+          if (backendStatus.port) {
+            setPythonPort(backendStatus.port);
+          }
+          
+          if (backendStatus.status === 'running' && backendStatus.available) {
+            setPythonStatus('connected');
+          } else {
+            // Try the API service as a fallback
+            checkPythonConnection();
+          }
+        } catch (error) {
+          console.error('Error checking Python backend:', error);
+          checkPythonConnection();
+        }
+      } else {
+        checkPythonConnection();
+      }
     };
+    
     loadConfig();
+    
+    // Listen for backend status updates
+    if (window.electron) {
+      const backendStatusListener = (status) => {
+        console.log('Backend status update received:', status);
+        if (status.port) {
+          setPythonPort(status.port);
+        }
+        
+        if (status.status === 'running') {
+          checkPythonConnection();
+        } else if (['crashed', 'failed', 'stopped'].includes(status.status)) {
+          setPythonStatus('disconnected');
+        }
+      };
+      
+      window.electron.receive('backend-status', backendStatusListener);
+      
+      // Cleanup
+      return () => {
+        window.electron.removeListener('backend-status', backendStatusListener);
+      };
+    }
   }, []);
 
   const checkOllamaConnection = async (url: string) => {
@@ -57,6 +122,46 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
     } catch (error) {
       console.error('Ollama connection error:', error);
       setOllamaStatus('disconnected');
+    }
+  };
+
+  const checkPythonConnection = async () => {
+    setPythonStatus('checking');
+    setIsReconnecting(true);
+    setReconnectError(null);
+    
+    try {
+      // First check backend health
+      const health = await api.checkHealth();
+      
+      if (health.status === 'connected') {
+        setPythonStatus('connected');
+        
+        // Update port if it's different
+        if (health.port && health.port !== pythonPort) {
+          setPythonPort(health.port);
+        }
+        
+        // Now try the actual test endpoint
+        try {
+          const result = await api.getTest();
+          if (!result) {
+            console.warn('Test endpoint returned empty result');
+          }
+        } catch (testError) {
+          console.warn('Test endpoint error:', testError);
+          // Don't change status for test errors if health check passed
+        }
+      } else {
+        setPythonStatus('disconnected');
+        setReconnectError('Failed to connect to Python backend');
+      }
+    } catch (error) {
+      console.error('Python backend check failed:', error);
+      setPythonStatus('disconnected');
+      setReconnectError(error.message);
+    } finally {
+      setIsReconnecting(false);
     }
   };
 
@@ -99,10 +204,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
             <div className="p-4 bg-sakura-100 dark:bg-sakura-100/10 rounded-xl">
               <Bot className="w-8 h-8 text-sakura-500" />
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-gray-900 dark:text-white mb-1">
-                Welcome to Clara
-              </h1>
+            <div className="flex-grow">
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-semibold text-gray-900 dark:text-white mb-1">
+                  Welcome to Clara
+                </h1>
+                <div className="flex items-center gap-2">
+                  <div 
+                    className={`w-2 h-2 rounded-full ${
+                      pythonStatus === 'connected' 
+                        ? 'bg-green-500 animate-pulse' 
+                        : 'bg-red-500'
+                    }`}
+                  />
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {pythonStatus === 'connected' 
+                      ? pythonPort 
+                        ? `Online (Port: ${pythonPort})` 
+                        : 'Online' 
+                      : 'Offline'}
+                  </span>
+                </div>
+              </div>
               <p className="text-gray-600 dark:text-gray-400">
                 Your AI assistant powered by Ollama and ComfyUI
               </p>
@@ -130,7 +253,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
               </div>
             </button>
 
-            {/* Image Generation Action - Fixed JSX closing tag issue */}
+            {/* Image Generation Action */}
             <button 
               onClick={() => onPageChange?.('image-gen')}
               className="group flex flex-col rounded-xl bg-white/50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 hover:bg-sakura-50 dark:hover:bg-sakura-100/5 transition-all duration-300 transform hover:-translate-y-1"
@@ -242,12 +365,59 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
                   </div>
                 )}
               </div>
+
+              {/* Python Backend Status */}
+              <div className="mt-4 p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/10">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-100 dark:bg-indigo-800/30 rounded-lg">
+                      <Server className="w-6 h-6 text-indigo-500 dark:text-indigo-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+                        Python Backend
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {pythonStatus === 'connected'
+                          ? `Connected on port ${pythonPort || 'unknown'}`
+                          : 'Backend service status'}
+                      </p>
+                    </div>
+                  </div>
+                  {renderStatusIcon(pythonStatus)}
+                </div>
+                
+                {pythonStatus !== 'connected' && (
+                  <div className="mt-4">
+                    <button
+                      onClick={checkPythonConnection}
+                      disabled={isReconnecting}
+                      className="px-4 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-800/30 flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isReconnecting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Connecting...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4" />
+                          Refresh Connection
+                        </>
+                      )}
+                    </button>
+                    
+                    {reconnectError && (
+                      <p className="mt-2 text-xs text-red-500">
+                        Error: {reconnectError}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
-        
-        {/* Getting Started Section */}
-
         
         {/* Capabilities Showcase */}
         <div className="glassmorphic rounded-2xl p-8 animate-fadeIn animation-delay-400">
@@ -324,48 +494,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
               <div className="bg-white/70 dark:bg-gray-800/70 p-5 rounded-xl border border-sakura-200 dark:border-sakura-800/50 backdrop-blur-sm transform transition-transform hover:scale-102 hover:shadow-md">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 rounded-lg bg-sakura-100 dark:bg-sakura-900/30">
-                    <Sparkles className="w-5 h-5 text-sakura-500" />
+                    <FileText className="w-5 h-5 text-sakura-500" />
                   </div>
-                  <h3 className="font-medium text-gray-900 dark:text-white">Prompt Enhancement</h3>
+                  <h3 className="font-medium text-gray-900 dark:text-white">Knowledge Base System</h3>
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  New AI-powered prompt enhancement feature that improves your image generation prompts using local Ollama models. Create stunning images with enhanced details, artistic style, and atmosphere.
+                  Store documents and personalize Clara to speak based on your data and facts. Upload your content and get responses that adapt to your specific information, enabling more accurate and contextually relevant interactions.
                 </p>
               </div>
               
               <div className="bg-white/70 dark:bg-gray-800/70 p-5 rounded-xl border border-indigo-200 dark:border-indigo-800/50 backdrop-blur-sm transform transition-transform hover:scale-102 hover:shadow-md">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
-                    <MessageSquare className="w-5 h-5 text-indigo-500" />
+                    <Server className="w-5 h-5 text-indigo-500" />
                   </div>
-                  <h3 className="font-medium text-gray-900 dark:text-white">Customizable System Prompts</h3>
+                  <h3 className="font-medium text-gray-900 dark:text-white">Enhanced Python Backend</h3>
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Customize how Clara responds by editing the system prompt. Create specialized assistants for coding, creative writing, or any other task with simple configuration.
+                  Significantly improved Python backend with better stability, faster response times, and expanded capabilities. The new architecture supports more complex operations and lays the groundwork for upcoming advanced features.
                 </p>
               </div>
               
               <div className="bg-white/70 dark:bg-gray-800/70 p-5 rounded-xl border border-emerald-200 dark:border-emerald-800/50 backdrop-blur-sm transform transition-transform hover:scale-102 hover:shadow-md">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
-                    <Settings className="w-5 h-5 text-emerald-500" />
+                    <Sparkles className="w-5 h-5 text-emerald-500" />
                   </div>
-                  <h3 className="font-medium text-gray-900 dark:text-white">Model-Specific Presets</h3>
+                  <h3 className="font-medium text-gray-900 dark:text-white">Coming Soon: MCP & Agentic Functions</h3>
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Clara now remembers optimal settings for each model. Get the best results automatically with saved configurations for different LLMs and image generation models.
+                  Get ready for Mission Control Protocol (MCP) and a new Node system with Agentic functions. These upcoming features will enable complex task automation, multi-step reasoning, and sophisticated workflows all within Clara's interface.
                 </p>
               </div>
               
               <div className="bg-white/70 dark:bg-gray-800/70 p-5 rounded-xl border border-amber-200 dark:border-amber-800/50 backdrop-blur-sm transform transition-transform hover:scale-102 hover:shadow-md">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
-                    <CheckCircle2 className="w-5 h-5 text-amber-500" />
+                    <Settings className="w-5 h-5 text-amber-500" />
                   </div>
-                  <h3 className="font-medium text-gray-900 dark:text-white">Bug Fixes & Improvements</h3>
+                  <h3 className="font-medium text-gray-900 dark:text-white">UI and QOL Improvements</h3>
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Multiple bug fixes for chat functionality reported on GitHub. Better handling of message editing, retry operations, and improved reliability for long conversations.
+                  Numerous UI refinements and quality-of-life updates make Clara more reliable and user-friendly. Enjoy smoother transitions, improved responsiveness, and a more intuitive design that enhances your overall experience.
                 </p>
               </div>
             </div>
@@ -402,4 +572,3 @@ const Dashboard: React.FC<DashboardProps> = ({ onPageChange }) => {
 };
 
 export default Dashboard;
-

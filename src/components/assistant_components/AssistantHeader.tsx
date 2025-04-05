@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Home, Bot, CheckCircle2, AlertCircle, ChevronDown, Sun, Moon, User, Settings, Image as ImageIcon, Star, BarChart3 } from 'lucide-react';
+import { Home, Bot, CheckCircle2, AlertCircle, ChevronDown, Sun, Moon, Image as ImageIcon, Star, BarChart3, Database } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { db } from '../../db';
+import UserProfileButton from '../common/UserProfileButton';
 
 interface AssistantHeaderProps {
   connectionStatus: 'checking' | 'connected' | 'disconnected';
@@ -10,8 +11,10 @@ interface AssistantHeaderProps {
   showModelSelect: boolean;
   setShowModelSelect: (show: boolean) => void;
   setSelectedModel: (model: string) => void;
-  onOpenSettings: () => void;
+  onPageChange: (page: string) => void;
   onNavigateHome: () => void;
+  onOpenSettings: () => void;
+  onOpenKnowledgeBase: () => void;
 }
 
 interface Model {
@@ -28,8 +31,10 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
   showModelSelect,
   setShowModelSelect,
   setSelectedModel,
+  onPageChange,
+  onNavigateHome,
   onOpenSettings,
-  onNavigateHome
+  onOpenKnowledgeBase
 }) => {
   const { isDark, toggleTheme } = useTheme();
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -174,7 +179,8 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
 
   return (
     <div className="h-16 glassmorphic flex items-center justify-between px-6 relative z-20">
-      <div className="flex items-center gap-4 flex-1">
+      {/* Left section with fixed width */}
+      <div className="flex items-center gap-4 w-[500px]">
         <button 
           onClick={onNavigateHome}
           className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/5 text-gray-700 dark:text-gray-300"
@@ -197,7 +203,10 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
              'Disconnected'}
           </span>
         </div>
+      </div>
 
+      {/* Center section with model selector */}
+      <div className="flex-1 flex items-center justify-center">
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setShowModelSelect(!showModelSelect)}
@@ -241,8 +250,18 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
           )}
         </div>
       </div>
-      
-      <div className="flex items-center gap-4">
+
+      {/* Right section with fixed width */}
+      <div className="flex items-center gap-4 w-[500px] justify-end">
+        <button
+          onClick={onOpenKnowledgeBase}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 hover:bg-white/70 dark:hover:bg-gray-800/70 transition-colors whitespace-nowrap"
+          title="Knowledge Base"
+        >
+          <Database className="w-5 h-5" />
+          <span className="text-sm font-medium">Knowledge Base</span>
+        </button>
+
         <button 
           onClick={toggleTheme}
           className="p-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/10 transition-colors"
@@ -254,21 +273,11 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
             <Moon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
           )}
         </button>
-        <button
-          onClick={onOpenSettings}
-          className="p-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/10 transition-colors"
-          aria-label="Open settings"
-        >
-          <Settings className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-        </button>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/10 cursor-pointer">
-          <div className="w-8 h-8 rounded-full bg-sakura-100 dark:bg-sakura-100/10 flex items-center justify-center">
-            <User className="w-5 h-5 text-sakura-500" />
-          </div>
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {userName || 'Profile'}
-          </span>
-        </div>
+
+        <UserProfileButton
+          userName={userName || 'Profile'}
+          onPageChange={onPageChange}
+        />
       </div>
     </div>
   );
