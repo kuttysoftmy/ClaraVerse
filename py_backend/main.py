@@ -253,7 +253,9 @@ init_db()
 
 # Create a persistent directory for vector databases
 vectordb_dir = os.path.join(os.path.expanduser("~"), ".clara", "vectordb")
+temp_vectordb_dir = os.path.join(vectordb_dir, "temp")  # Add directory for temporary collections
 os.makedirs(vectordb_dir, exist_ok=True)
+os.makedirs(temp_vectordb_dir, exist_ok=True)  # Create temp directory
 
 # Initialize DocumentAI singleton cache
 doc_ai_cache = {}
@@ -267,7 +269,13 @@ def get_doc_ai(collection_name: str = "default_collection"):
         return doc_ai_cache[collection_name]
     
     # Create new instance if not in cache
-    persist_dir = os.path.join(vectordb_dir, collection_name)
+    if collection_name.startswith("temp_collection_"):
+        # Use temp directory for temporary collections
+        persist_dir = os.path.join(temp_vectordb_dir, collection_name)
+    else:
+        # Use regular directory for permanent collections
+        persist_dir = os.path.join(vectordb_dir, collection_name)
+    
     os.makedirs(persist_dir, exist_ok=True)
     
     # Create new instance and cache it
@@ -394,6 +402,108 @@ def list_collections():
             return {"collections": collections}
     except Exception as e:
         logger.error(f"Error listing collections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/collections/{collection_name}")
+async def delete_collection(collection_name: str):
+    """Delete a collection and all its documents"""
+    try:
+        # Delete from vector store first
+        doc_ai = get_doc_ai(collection_name)
+        
+        # Get all document chunks for this collection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT dc.chunk_id
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE d.collection_name = ?
+            """, (collection_name,))
+            chunk_ids = [row[0] for row in cursor.fetchall()]
+            
+            if chunk_ids:
+                # Delete chunks from vector store
+                doc_ai.delete_documents(chunk_ids)
+            
+            # Delete all documents and chunks from SQLite
+            cursor.execute("DELETE FROM documents WHERE collection_name = ?", (collection_name,))
+            
+            # Delete collection record
+            cursor.execute("DELETE FROM collections WHERE name = ?", (collection_name,))
+            conn.commit()
+            
+        # Remove from cache to force recreation
+        if collection_name in doc_ai_cache:
+            del doc_ai_cache[collection_name]
+            
+        return {"message": f"Collection {collection_name} deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error deleting collection: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/collections/recreate")
+async def recreate_collection(collection_name: str = "default_collection"):
+    """Recreate a collection by deleting and reinitializing it"""
+    try:
+        # Get persist directory path
+        persist_dir = os.path.join(vectordb_dir, collection_name)
+        if collection_name.startswith("temp_collection_"):
+            persist_dir = os.path.join(temp_vectordb_dir, collection_name)
+
+        # Remove from cache first to ensure we don't have any lingering instances
+        if collection_name in doc_ai_cache:
+            del doc_ai_cache[collection_name]
+
+        # Delete the directory completely if it exists
+        if os.path.exists(persist_dir):
+            try:
+                shutil.rmtree(persist_dir)
+                logger.info(f"Deleted persist directory: {persist_dir}")
+            except Exception as e:
+                logger.error(f"Error deleting directory: {e}")
+                # Even if directory deletion fails, continue with recreation
+
+        # Delete all documents from the database
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Delete all documents and chunks from SQLite
+            cursor.execute("DELETE FROM document_chunks WHERE document_id IN (SELECT id FROM documents WHERE collection_name = ?)", (collection_name,))
+            cursor.execute("DELETE FROM documents WHERE collection_name = ?", (collection_name,))
+            cursor.execute("DELETE FROM collections WHERE name = ?", (collection_name,))
+            conn.commit()
+
+        # Create directory for new collection
+        os.makedirs(persist_dir, exist_ok=True)
+        
+        # Get a fresh DocumentAI instance
+        doc_ai = DocumentAI(
+            persist_directory=persist_dir,
+            collection_name=collection_name
+        )
+        
+        # Store in cache
+        doc_ai_cache[collection_name] = doc_ai
+        
+        # Create new collection record
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO collections (name, description) VALUES (?, ?)",
+                (collection_name, f"Recreated collection {collection_name}")
+            )
+            conn.commit()
+        
+        return {
+            "message": f"Collection {collection_name} recreated successfully",
+            "collection_name": collection_name
+        }
+        
+    except Exception as e:
+        logger.error(f"Error recreating collection: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/documents/upload")

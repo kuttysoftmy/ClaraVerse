@@ -1,15 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AssistantSidebar from './AssistantSidebar';
-import { AssistantHeader, ChatInput, ChatWindow } from './assistant_components';
+import { AssistantHeader, ChatInput, ChatWindow, KnowledgeBaseModal, ToolModal } from './assistant_components';
 import AssistantSettings from './assistant_components/AssistantSettings';
 import ImageWarning from './assistant_components/ImageWarning';
 import ModelWarning from './assistant_components/ModelWarning';
 import ModelPullModal from './assistant_components/ModelPullModal';
-import { KnowledgeBaseModal } from './assistant_components';
+import WhatsNewWidget from './assistant_components/WhatsNewWidget';
 import { db } from '../db';
-import { OllamaClient } from '../utils';
-import { generateSystemPromptWithContext } from '../utils/ragUtils';
-import type { Message, Chat } from '../db';
+import { OllamaClient, ChatMessage, ChatRole } from '../utils';
+import type { Message, Chat, Tool, APIConfig } from '../db';
+import { v4 as uuidv4 } from 'uuid';
+
+// Add RequestOptions type definition
+interface RequestOptions {
+  temperature?: number;
+  top_p?: number;
+  stream?: boolean;
+  tools?: Tool[];
+  [key: string]: any;
+}
 
 interface UploadedImage {
   id: string;
@@ -28,8 +37,21 @@ interface AssistantProps {
   onPageChange: (page: string) => void;
 }
 
+interface ToolResult {
+  name: string;
+  result: string;
+}
+
+interface SearchResult {
+  results: Array<{
+    score: number;
+    content: string;
+  }>;
+}
+
 const MAX_CONTEXT_MESSAGES = 20;
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_TEMP_COLLECTIONS = 5; // Maximum number of temporary collections
 
 const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -58,46 +80,88 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [showPullModal, setShowPullModal] = useState(false);
   const [showKnowledgeBase, setShowKnowledgeBase] = useState(false);
+  const [showToolModal, setShowToolModal] = useState(false);
   const [ragEnabled, setRagEnabled] = useState(false);
   const [pythonPort, setPythonPort] = useState<number | null>(null);
   const [temporaryDocs, setTemporaryDocs] = useState<TemporaryDocument[]>([]);
+  const [tools, setTools] = useState<Tool[]>([]);
+  const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
 
-  useEffect(() => {
-    const getPythonPort = async () => {
-      if (window.electron) {
-        try {
-          const port = await window.electron.getPythonPort();
-          setPythonPort(port);
-        } catch (error) {
-          console.error('Could not get Python port:', error);
-        }
-      }
-    };
-    getPythonPort();
-  }, []);
+  // Initialize or get temporary collection names from localStorage
+  const [tempCollectionNames] = useState(() => {
+    const stored = localStorage.getItem('temp_collection_names');
+    if (stored) {
+      return JSON.parse(stored);
+    }
+    // Create array of fixed collection names
+    const names = Array.from({ length: MAX_TEMP_COLLECTIONS }, (_, i) => `temp_collection_${i + 1}`);
+    localStorage.setItem('temp_collection_names', JSON.stringify(names));
+    return names;
+  });
 
-  const cleanupOldCollections = async () => {
+  // Track current collection index
+  const [currentTempCollectionIndex, setCurrentTempCollectionIndex] = useState(() => {
+    const stored = localStorage.getItem('current_temp_collection_index');
+    return stored ? parseInt(stored) : 0;
+  });
+
+  const getNextTempCollectionName = () => {
+    const nextIndex = (currentTempCollectionIndex + 1) % MAX_TEMP_COLLECTIONS;
+    setCurrentTempCollectionIndex(nextIndex);
+    localStorage.setItem('current_temp_collection_index', nextIndex.toString());
+    return tempCollectionNames[nextIndex];
+  };
+
+  const cleanupTempCollection = async (collectionName: string) => {
     if (!pythonPort) return;
 
-    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000; // 5 minutes threshold
-
-    // Filter out old documents
-    const oldDocs = temporaryDocs.filter(doc => doc.timestamp < fiveMinutesAgo);
-    const currentDocs = temporaryDocs.filter(doc => doc.timestamp >= fiveMinutesAgo);
-
-    // Delete old collections
-    for (const doc of oldDocs) {
-      try {
-        await fetch(`http://127.0.0.1:${pythonPort}/collections/${doc.collection}`, {
-          method: 'DELETE'
-        });
-      } catch (error) {
-        console.error('Error deleting old collection:', error);
-      }
+    try {
+      // Delete the collection through the API
+      await fetch(`http://127.0.0.1:${pythonPort}/collections/${collectionName}`, {
+        method: 'DELETE'
+      });
+      
+      console.log(`Successfully cleaned up collection: ${collectionName}`);
+    } catch (error) {
+      console.error('Error cleaning up temporary collection:', error);
     }
-
-    setTemporaryDocs(currentDocs);
   };
+
+  const cleanupAllTempCollections = async () => {
+    if (!pythonPort) return;
+
+    for (const collectionName of tempCollectionNames) {
+      await cleanupTempCollection(collectionName);
+    }
+  };
+
+  // Add cleanup effect when component unmounts
+  useEffect(() => {
+    return () => {
+      if (temporaryDocs.length > 0) {
+        cleanupAllTempCollections();
+      }
+    };
+  }, []);
+
+  const getPythonPort = async () => {
+    try {
+      if (window.electron && window.electron.getPythonPort) {
+        return await window.electron.getPythonPort();
+      }
+      return null;
+    } catch (error) {
+      console.error('Could not get Python port:', error);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    getPythonPort().then(port => {
+      setPythonPort(port);
+    });
+  }, []);
 
   const checkModelImageSupport = (modelName: string): boolean => {
     const configs = localStorage.getItem('model_image_support');
@@ -182,11 +246,9 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     const files = event.target.files;
     if (!files) return;
 
-    // Clean up old collections first
-    await cleanupOldCollections();
-
+    // Get next collection name
+    const tempCollectionName = getNextTempCollectionName();
     const timestamp = Date.now();
-    const tempCollectionName = `temp_${activeChat}_${timestamp}`;
     const uploadedDocs: TemporaryDocument[] = [];
 
     for (const file of files) {
@@ -220,24 +282,12 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
 
     if (uploadedDocs.length > 0) {
       setTemporaryDocs(prev => [...prev, ...uploadedDocs]);
-      setRagEnabled(true); // Only enable RAG if upload was successful
+      setRagEnabled(true);
     }
   };
 
   const removeTemporaryDoc = async (docId: string) => {
-    const doc = temporaryDocs.find(d => d.id === docId);
-    if (!doc || !pythonPort) return;
-
-    try {
-      // Delete the temporary collection
-      await fetch(`http://127.0.0.1:${pythonPort}/collections/${doc.collection}`, {
-        method: 'DELETE'
-      });
-
-      setTemporaryDocs(prev => prev.filter(d => d.id !== docId));
-    } catch (error) {
-      console.error('Error removing temporary document:', error);
-    }
+    setTemporaryDocs(prev => prev.filter(d => d.id !== docId));
   };
 
   useEffect(() => {
@@ -250,7 +300,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
 
   useEffect(() => {
     if (activeChat) {
-      cleanupOldCollections();
+      // No need to cleanup here, temp docs should persist across chat changes
     }
   }, [activeChat]);
 
@@ -318,6 +368,19 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     loadInitialChat();
   }, []);
 
+  // Load tools on component mount
+  useEffect(() => {
+    const loadTools = async () => {
+      try {
+        const availableTools = await db.getAllTools();
+        setTools(availableTools.filter(tool => tool.isEnabled));
+      } catch (error) {
+        console.error('Error loading tools:', error);
+      }
+    };
+    loadTools();
+  }, []);
+
   const getMostUsedModel = async (availableModels: any[]): Promise<string | null> => {
     try {
       // Get model usage statistics from the database
@@ -361,23 +424,15 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
         let clientConfig: any = {};
 
         if (config.api_type === 'ollama') {
-          // Use Ollama's API
           baseUrl = config.ollama_base_url || 'http://localhost:11434';
           clientConfig = { type: 'ollama' };
         } else {
-          // OpenAI-like API
-          if (config.openai_base_url) {
-            // Custom OpenAI-compatible API
-            baseUrl = config.openai_base_url.endsWith('/v1')
-              ? config.openai_base_url
-              : `${config.openai_base_url.replace(/\/$/, '')}/v1`;
-          } else {
-            // Official OpenAI API
-            baseUrl = 'https://api.openai.com/v1';
-          }
+          baseUrl = config.api_type === 'openai' 
+            ? 'https://api.openai.com/v1'
+            : config.ollama_base_url || 'http://localhost:11434';
 
           clientConfig = {
-            type: 'openai',
+            type: config.api_type || 'ollama',
             apiKey: config.openai_api_key || ''
           };
         }
@@ -385,12 +440,29 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
         const newClient = new OllamaClient(baseUrl, clientConfig);
         setClient(newClient);
 
-        // Test connection
+        // Test connection and get model list
         const modelList = await newClient.listModels();
         setModels(modelList);
 
-        // Rest of the initialization code...
-        // ...existing model setup code...
+        // Show model pull modal if we're connected to Ollama but have no models
+        if (config.api_type === 'ollama' && modelList.length === 0) {
+          setShowPullModal(true);
+        }
+
+        // If no model is selected, try to select one automatically
+        if (!selectedModel) {
+          // First try to get the most used model
+          const mostUsed = await getMostUsedModel(modelList);
+          if (mostUsed) {
+            handleModelSelect(mostUsed);
+          } else {
+            // If no most used model, select the first available model
+            const defaultModel = modelList[0]?.name;
+            if (defaultModel) {
+              handleModelSelect(defaultModel);
+            }
+          }
+        }
 
         setConnectionStatus('connected');
       } catch (err) {
@@ -403,8 +475,10 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
   }, []);
 
   const handleNewChat = async (initialMessage?: string) => {
-    const chatId = await db.createChat(initialMessage?.slice(0, 30) || 'New Chat');
+    // Create chat with a temporary name - it will be updated after first message
+    const chatId = await db.createChat(initialMessage?.slice(0, 50) || 'New Chat');
     setActiveChat(chatId);
+
     const welcomeMessage = {
       id: crypto.randomUUID(),
       chat_id: chatId,
@@ -413,25 +487,30 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       timestamp: new Date().toISOString(),
       tokens: 0
     };
+
     await db.addMessage(
       chatId,
       welcomeMessage.content,
       welcomeMessage.role,
       welcomeMessage.tokens
     );
+
     setMessages([welcomeMessage]);
     const updatedChats = await db.getRecentChats();
     setChats(updatedChats);
 
-    // If there's an initial message, send it immediately
     if (initialMessage) {
       setInput(initialMessage);
       setTimeout(() => handleSend(), 100);
     }
   };
 
-  const getContextMessages = (messages: Message[]): Message[] => {
-    // Get the last MAX_CONTEXT_MESSAGES messages
+  const getContextMessages = (messages: Message[], useTool: boolean = false): Message[] => {
+    // For tool calls, only get the last message for context
+    if (useTool) {
+      return messages.slice(-1);
+    }
+    // For normal chat, get the last MAX_CONTEXT_MESSAGES messages
     return messages.slice(-MAX_CONTEXT_MESSAGES);
   };
 
@@ -466,45 +545,83 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     try {
       // Get results from temporary collections first
       const tempResults = await Promise.all(
-        temporaryDocs.map(doc =>
-          fetch(`http://127.0.0.1:${pythonPort}/documents/search`, {
+        temporaryDocs.map(async (doc) => {
+          try {
+            const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query,
+                collection_name: doc.collection,
+                k: 8,
+              }),
+            });
+            
+            if (!response.ok) {
+              console.warn(`Search failed for collection ${doc.collection}:`, response.status);
+              return { results: [] };
+            }
+            
+            return await response.json();
+          } catch (error) {
+            console.warn(`Search error for collection ${doc.collection}:`, error);
+            return { results: [] };
+          }
+        })
+      );
+
+      // For temp docs, use all results regardless of score
+      const allTempResults = tempResults.flatMap(r => r.results || []);
+
+      // Only search default collection if no temp docs exist and RAG is enabled
+      let defaultResults = { results: [] };
+      if (temporaryDocs.length === 0 && ragEnabled) {
+        try {
+          const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query,
-              collection_name: doc.collection,
-              k: 2,
+              collection_name: 'default_collection',
+              k: 8,
             }),
-          }).then(res => res.json())
-        )
-      );
+          });
 
-      // Only search default collection if no temp docs or RAG is explicitly enabled
-      let defaultResults = { results: [] };
-      if (ragEnabled || temporaryDocs.length === 0) {
-        defaultResults = await fetch(`http://127.0.0.1:${pythonPort}/documents/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query,
-            collection_name: 'default_collection',
-            k: 2,
-          }),
-        }).then(res => res.json());
+          if (response.ok) {
+            defaultResults = await response.json();
+          } else {
+            console.warn('Default collection search failed:', response.status);
+          }
+        } catch (error) {
+          console.warn('Default collection search error:', error);
+        }
       }
 
-      // Combine and sort results
+      // For default collection, still filter by score > 0
+      const defaultFilteredResults = (defaultResults?.results || [])
+        .filter(result => result.score > 0);
+
+      // Combine results, prioritizing higher scores
       const allResults = [
-        ...tempResults.flatMap(r => r.results || []),
-        ...(defaultResults?.results || [])
+        ...allTempResults,
+        ...defaultFilteredResults
       ].sort((a, b) => (b.score || 0) - (a.score || 0));
 
       return {
-        results: allResults.slice(0, 4) // Keep top 4 results
+        results: allResults.slice(0, 8)
       };
     } catch (error) {
       console.error('Error searching documents:', error);
-      return null;
+      return { results: [] }; // Return empty results instead of null
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!input.trim()) return;
+
+    const results = await searchDocuments(input);
+    if (results && results.results) {
+      setSearchResults(results);
     }
   };
 
@@ -518,24 +635,48 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
 
     let currentChatId = activeChat;
     if (!currentChatId) {
-      currentChatId = await db.createChat(input.slice(0, 30));
+      const chatName = input.length > 50 ? input.slice(0, 50) + '...' : input;
+      currentChatId = await db.createChat(chatName);
       setActiveChat(currentChatId);
-      const updatedChats = await db.getRecentChats();
-      setChats(updatedChats);
+    } else {
+      const currentChats = await db.getRecentChats();
+      const thisChat = currentChats.find(c => c.id === currentChatId);
+      if (thisChat && thisChat.title === 'New Chat') {
+        const newTitle = input.length > 50 ? input.slice(0, 50) + '...' : input;
+        await db.updateChat(currentChatId, { title: newTitle });
+        const updatedChats = await db.getRecentChats();
+        setChats(updatedChats);
+      }
     }
 
-    // Create user message
+    // Get base system prompt
+    let systemPrompt = await db.getSystemPrompt();
+
+    // Check if we need to do RAG search and inject into system prompt
+    if ((temporaryDocs.length > 0 || ragEnabled) && pythonPort) {
+      const results = await searchDocuments(input);
+      if (results && results.results && results.results.length > 0) {
+        const contextFromSearch = results.results
+          .map(r => r.content)
+          .join('\n\n');
+        
+        // Inject context into system prompt
+        systemPrompt = `${systemPrompt || ''}\n\nRelevant context for the current query:\n${contextFromSearch}\n\nPlease use this context to inform your response to the user's query.`;
+      }
+    }
+
+    // Create user message (without RAG context)
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: uuidv4(),
       chat_id: currentChatId,
       content: input,
-      role: 'user',
-      timestamp: new Date().toISOString(),
+      role: 'user' as ChatRole,
+      timestamp: Date.now(),
       tokens: 0,
-      images: images.length > 0 ? images.map(img => img.preview) : undefined
+      images: images.map(img => img.preview)
     };
 
-    // Save user message first
+    // Save user message
     await db.addMessage(
       currentChatId,
       userMessage.content,
@@ -548,13 +689,13 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     setInput('');
     setImages([]);
 
-    // Create initial placeholder message outside try block
+    // Create initial placeholder message
     const assistantMessage: Message = {
-      id: crypto.randomUUID(),
+      id: uuidv4(),
       chat_id: currentChatId,
       content: '',
-      role: 'assistant',
-      timestamp: new Date().toISOString(),
+      role: 'assistant' as ChatRole,
+      timestamp: Date.now(),
       tokens: 0
     };
 
@@ -565,29 +706,26 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       // Add placeholder immediately
       setMessages(prev => [...prev, assistantMessage]);
 
-      // If RAG is enabled, search for relevant documents
-      let systemPrompt = await db.getSystemPrompt();
-
-      if (ragEnabled || temporaryDocs.length > 0) {
-        const searchResults = await searchDocuments(input);
-        if (searchResults?.results?.length > 0) {
-          systemPrompt = generateSystemPromptWithContext(
-            systemPrompt,
-            searchResults.results,
-            temporaryDocs.length > 0 // Pass flag for temporary docs
-          );
-        }
-      }
-
-      // Get context messages and add enhanced system prompt
-      const contextMessages = getContextMessages([...messages, userMessage]);
-      const formattedMessages = [
-        { role: 'system', content: systemPrompt },
-        ...contextMessages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        }))
+      // Get context messages - use minimal context for tool calls
+      const contextMessages = getContextMessages([...messages, userMessage], !!selectedTool);
+      const formattedMessages: ChatMessage[] = [
+        { role: 'system' as ChatRole, content: systemPrompt },
+        ...contextMessages.map(msg => {
+          const role = msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant'
+            ? msg.role as ChatRole
+            : 'user' as ChatRole;
+          return {
+            role,
+            content: msg.content
+          };
+        })
       ];
+
+      // Define chat options
+      const chatOptions: RequestOptions = {
+        temperature: 0.7,
+        top_p: 0.9
+      };
 
       if (images.length > 0) {
         // Handle image generation
@@ -596,131 +734,131 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
             selectedModel,
             input,
             images.map(img => img.base64),
-            { max_tokens: 1000 }
+            chatOptions
           );
 
           const content = response.response || '';
           const tokens = response.eval_count || 0;
 
-          // Update message with response
           setMessages(prev => prev.map(msg =>
             msg.id === assistantMessage.id
               ? { ...msg, content, tokens }
               : msg
           ));
 
-          // Save to database
           await db.addMessage(currentChatId, content, 'assistant', tokens);
         } catch (error: any) {
-          // Parse error message if it's JSON
-          let errorContent = error.message;
-          try {
-            const parsedError = JSON.parse(error.message);
-            if (parsedError.apiError?.message) {
-              errorContent = `API Error: ${parsedError.apiError.message}\n\nFull Response:\n${JSON.stringify(parsedError, null, 2)}`;
-            } else if (parsedError.error?.message) {
-              errorContent = `Error: ${parsedError.error.message}\n\nFull Response:\n${JSON.stringify(parsedError, null, 2)}`;
-            }
-          } catch (e) {
-            // If not JSON, use the error message as is
-            errorContent = `Error: ${error.message}`;
-          }
+          console.error('Image generation error:', error);
+          throw error;
+        }
+      } else if (selectedTool) {
+        // Only include tools when a tool is explicitly selected
+        chatOptions.tools = [selectedTool];
+        
+        try {
+          const response = await client.sendChat(selectedModel, formattedMessages, chatOptions, [selectedTool]);
+          const content = response.message?.content || '';
+          const tokens = response.eval_count || 0;
 
-          // Update message with error
           setMessages(prev => prev.map(msg =>
             msg.id === assistantMessage.id
-              ? { ...msg, content: `\`\`\`json\n${errorContent}\n\`\`\`` }
+              ? { ...msg, content, tokens }
               : msg
           ));
 
-          // Save error message to database
-          await db.addMessage(
-            currentChatId,
-            `\`\`\`json\n${errorContent}\n\`\`\``,
-            'assistant',
-            0
-          );
-
-          // Re-throw to be caught by outer catch
+          await db.addMessage(currentChatId, content, 'assistant', tokens);
+        } catch (error: any) {
+          console.error('Tool execution error:', error);
           throw error;
         }
       } else if (isStreaming) {
+        // Normal streaming mode when no tools are being used
         let streamedContent = '';
         let tokens = 0;
 
-        // Stream the response
         try {
-          for await (const chunk of client.streamChat(selectedModel, formattedMessages)) {
+          chatOptions.stream = true;
+          for await (const chunk of client.streamChat(selectedModel, formattedMessages, chatOptions)) {
             if (chunk.message?.content) {
               streamedContent += chunk.message.content;
               tokens = chunk.eval_count || tokens;
 
-              // Update message content as it streams
               setMessages(prev => prev.map(msg =>
                 msg.id === assistantMessage.id
                   ? { ...msg, content: streamedContent, tokens }
                   : msg
               ));
 
-              // Scroll during streaming
               scrollToBottom();
             }
           }
 
-          // Save final message to database
+          // Only save the message if we completed normally
           await db.addMessage(currentChatId, streamedContent, 'assistant', tokens);
         } catch (error: any) {
           console.error('Streaming error:', error);
-          throw error; // Let the outer catch handle it
+          
+          // Always preserve the content that was generated
+          const finalContent = streamedContent + (
+            error.name === 'AbortError' || error.message?.includes('BodyStreamBuffer was aborted')
+              ? "\n\n_Response was interrupted._"
+              : "\n\n_Error: Stream ended unexpectedly._"
+          );
+
+          // Update UI with what we have
+          setMessages(prev => prev.map(msg =>
+            msg.id === assistantMessage.id
+              ? { ...msg, content: finalContent, tokens }
+              : msg
+          ));
+
+          // Save what we have
+          await db.addMessage(currentChatId, finalContent, 'assistant', tokens);
+
+          // Don't throw the error if it was just an abort
+          if (error.name !== 'AbortError' && !error.message?.includes('BodyStreamBuffer was aborted')) {
+            throw error;
+          }
         }
       } else {
-        // Non-streaming response
-        const response = await client.sendChat(selectedModel, formattedMessages);
+        // Normal non-streaming mode
+        const response = await client.sendChat(selectedModel, formattedMessages, chatOptions);
         const content = response.message?.content || '';
         const tokens = response.eval_count || 0;
 
-        // Update message with response
         setMessages(prev => prev.map(msg =>
           msg.id === assistantMessage.id
             ? { ...msg, content, tokens }
             : msg
         ));
 
-        // Save to database
         await db.addMessage(currentChatId, content, 'assistant', tokens);
       }
 
       const endTime = performance.now();
       const duration = endTime - startTime;
 
-      // Update model usage statistics
       await db.updateModelUsage(selectedModel, duration);
       await db.updateUsage('response_time', duration);
 
-      // No need to save user message again as it's already saved
       scrollToBottom();
 
     } catch (error: any) {
       console.error('Error generating response:', error);
-
       let errorContent;
       try {
-        // Try to parse error as JSON
         const parsedError = JSON.parse(error.message);
         errorContent = `Error Response:\n\`\`\`json\n${JSON.stringify(parsedError, null, 2)}\n\`\`\``;
       } catch (e) {
-        // If not JSON, use plain text
         errorContent = `Error: ${error.message}`;
       }
 
-      // Update the placeholder message with error
       setMessages(prev => prev.map(msg =>
         msg.id === assistantMessage.id
           ? { ...msg, content: errorContent }
           : msg
       ));
 
-      // Save error message to database
       await db.addMessage(
         currentChatId,
         errorContent,
@@ -729,34 +867,22 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       );
     } finally {
       setIsProcessing(false);
+      setSelectedTool(null); // Reset selected tool after use
     }
   };
 
   const handleStopStreaming = () => {
     if (!client || !isProcessing) return;
 
-    // Abort the current stream
-    client.abortStream();
+    try {
+      // Abort the current stream
+      client.abortStream();
 
-    // Update the UI to show that streaming has stopped
-    setIsProcessing(false);
-
-    // Add a note to the last message to indicate it was interrupted
-    setMessages(prev => {
-      const lastMessage = prev[prev.length - 1];
-      if (lastMessage && lastMessage.role === 'assistant') {
-        return prev.map((msg, idx) => {
-          if (idx === prev.length - 1) {
-            return {
-              ...msg,
-              content: msg.content + "\n\n_Response was interrupted._"
-            };
-          }
-          return msg;
-        });
-      }
-      return prev;
-    });
+      // Update the UI to show that streaming has stopped
+      setIsProcessing(false);
+    } catch (error) {
+      console.warn('Error stopping stream:', error);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -780,16 +906,42 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
         yield progress;
       }
 
-      // Refresh model list after successful pull
+      // Refresh model list and update selected model
       const modelList = await client.listModels();
       setModels(modelList);
+      handleModelSelect(modelName);
+      
+      // Force close model selector dropdown
+      setShowModelSelect(false);
+      
+      // Show success message
+      const message: Message = {
+        id: uuidv4(),
+        chat_id: activeChat || '',
+        content: `Model "${modelName}" has been successfully installed and selected. You can now start using it for your conversations.`,
+        role: 'assistant' as ChatRole,
+        timestamp: new Date().toISOString(),
+        tokens: 0
+      };
 
-      // Set as selected model
-      setSelectedModel(modelName);
-      localStorage.setItem('selected_model', modelName);
+      // Add message to database and state
+      if (activeChat) {
+        await db.addMessage(
+          activeChat,
+          message.content,
+          message.role,
+          message.tokens
+        );
+      }
+      setMessages(prev => [...prev, message]);
+
+      // Force a re-render of the header by updating the models list again
+      setTimeout(() => {
+        setModels([...modelList]);
+      }, 100);
     } catch (error) {
       console.error('Error pulling model:', error);
-      throw error; // Re-throw to be handled by the modal
+      throw error;
     }
   };
 
@@ -1102,6 +1254,19 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
     }
   };
 
+  const handleModelInstallSuccess = async (modelName: string) => {
+    const message: Message = {
+      id: uuidv4(),
+      chat_id: activeChat || '',
+      content: `Model "${modelName}" has been successfully installed and selected. You can now start using it for your conversations.`,
+      role: 'assistant' as ChatRole,
+      timestamp: Date.now(),
+      tokens: 0
+    };
+
+    // ... rest of the existing code ...
+  };
+
   return (
     <div className="flex h-screen bg-gradient-to-br from-white to-sakura-100 dark:from-gray-900 dark:to-sakura-100/10">
       <AssistantSidebar
@@ -1124,6 +1289,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           onNavigateHome={handleNavigateHome}
           onOpenSettings={() => setShowSettings(true)}
           onOpenKnowledgeBase={() => setShowKnowledgeBase(true)}
+          onOpenTools={() => setShowToolModal(true)}
         />
 
         <ChatWindow
@@ -1165,6 +1331,8 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           onTemporaryDocUpload={handleTemporaryDocUpload}
           temporaryDocs={temporaryDocs}
           onRemoveTemporaryDoc={removeTemporaryDoc}
+          tools={tools}
+          onToolSelect={setSelectedTool}
         />
 
         <AssistantSettings
@@ -1172,6 +1340,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           onClose={() => setShowSettings(false)}
           isStreaming={isStreaming}
           setIsStreaming={setIsStreaming}
+          onOpenTools={() => setShowToolModal(true)}
         />
 
         {showModelWarning && (
@@ -1200,6 +1369,13 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
         <KnowledgeBaseModal
           isOpen={showKnowledgeBase}
           onClose={() => setShowKnowledgeBase(false)}
+        />
+
+        <ToolModal
+          isOpen={showToolModal}
+          onClose={() => setShowToolModal(false)}
+          client={client!}
+          model={selectedModel}
         />
       </div>
     </div>

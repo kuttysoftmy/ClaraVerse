@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Home, Bot, CheckCircle2, AlertCircle, ChevronDown, Sun, Moon, Image as ImageIcon, Star, BarChart3, Database } from 'lucide-react';
+import { Home, Bot, CheckCircle2, AlertCircle, ChevronDown, Sun, Moon, Image as ImageIcon, Star, BarChart3, Database, RefreshCw, Loader2, Settings, Wrench } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { db } from '../../db';
 import UserProfileButton from '../common/UserProfileButton';
@@ -7,7 +7,7 @@ import UserProfileButton from '../common/UserProfileButton';
 interface AssistantHeaderProps {
   connectionStatus: 'checking' | 'connected' | 'disconnected';
   selectedModel: string;
-  models: any[];
+  models: Array<{ name: string; id: string }>;
   showModelSelect: boolean;
   setShowModelSelect: (show: boolean) => void;
   setSelectedModel: (model: string) => void;
@@ -15,6 +15,7 @@ interface AssistantHeaderProps {
   onNavigateHome: () => void;
   onOpenSettings: () => void;
   onOpenKnowledgeBase: () => void;
+  onOpenTools: () => void;
 }
 
 interface Model {
@@ -34,7 +35,8 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
   onPageChange,
   onNavigateHome,
   onOpenSettings,
-  onOpenKnowledgeBase
+  onOpenKnowledgeBase,
+  onOpenTools
 }) => {
   const { isDark, toggleTheme } = useTheme();
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -43,6 +45,9 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
   const [modelUsage, setModelUsage] = useState<Record<string, number>>({});
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filteredModels, setFilteredModels] = useState<any[]>([]);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [lastSelectedModel, setLastSelectedModel] = useState<string>('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const loadUserName = async () => {
@@ -91,6 +96,18 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
     // Initialize filtered models with all models
     setFilteredModels(models);
   }, [models]);
+
+  // Track model changes for success message
+  useEffect(() => {
+    if (selectedModel && selectedModel !== lastSelectedModel) {
+      setShowSuccessMessage(true);
+      setLastSelectedModel(selectedModel);
+      const timer = setTimeout(() => {
+        setShowSuccessMessage(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedModel, lastSelectedModel]);
 
   const getMostUsedModel = (): string | null => {
     if (!modelUsage || Object.keys(modelUsage).length === 0) return null;
@@ -177,8 +194,34 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
 
   const mostUsedModel = getMostUsedModel();
 
+  // Add refresh models function
+  const handleRefreshModels = async () => {
+    if (!window.electron || isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      const response = await fetch('http://localhost:11434/api/tags');
+      const data = await response.json();
+      if (data.models) {
+        setFilteredModels(data.models);
+      }
+    } catch (error) {
+      console.error('Error refreshing models:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className="h-16 glassmorphic flex items-center justify-between px-6 relative z-20">
+      {/* Success Message */}
+      {showSuccessMessage && (
+        <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-4 py-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-lg shadow-lg flex items-center gap-2 animate-fade-out">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>Model "{selectedModel}" is now ready to use!</span>
+        </div>
+      )}
+
       {/* Left section with fixed width */}
       <div className="flex items-center gap-4 w-[500px]">
         <button 
@@ -188,39 +231,28 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
           <Home className="w-5 h-5" />
           <span>Back to Home</span>
         </button>
-
-        <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-white/50 dark:bg-gray-800/50">
-          {connectionStatus === 'checking' ? (
-            <Bot className="w-5 h-5 text-yellow-500 animate-spin" />
-          ) : connectionStatus === 'connected' ? (
-            <CheckCircle2 className="w-5 h-5 text-green-500" />
-          ) : (
-            <AlertCircle className="w-5 h-5 text-red-500" />
-          )}
-          <span className="text-sm text-gray-600 dark:text-gray-400">
-            {connectionStatus === 'checking' ? 'Checking Connection...' :
-             connectionStatus === 'connected' ? 'Connected' :
-             'Disconnected'}
-          </span>
-        </div>
       </div>
 
       {/* Center section with model selector */}
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center gap-2">
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setShowModelSelect(!showModelSelect)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 hover:bg-white/70 dark:hover:bg-gray-800/70 transition-colors"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 hover:bg-white/70 dark:hover:bg-gray-800/70 transition-colors ${
+              !selectedModel ? 'animate-pulse' : ''
+            }`}
             disabled={connectionStatus !== 'connected'}
           >
             <div className="flex items-center gap-2">
               <Bot className="w-5 h-5" />
-              <span className="text-sm font-medium">{selectedModel || 'Select Model'}</span>
+              <span className="text-sm font-medium">
+                {selectedModel || (models.length > 0 ? 'Select a Model' : 'Loading Models...')}
+              </span>
               {selectedModel === mostUsedModel && (
                 <Star className="w-4 h-4 text-yellow-500" title="Most used model" />
               )}
               {modelConfigs[selectedModel] && (
-                <ImageIcon className="w-4 h-4 text-sakura-500" />
+                <ImageIcon className="w-4 h-4 text-sakura-500" title="Supports images" />
               )}
             </div>
             <ChevronDown className="w-4 h-4" />
@@ -249,33 +281,76 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({
             </div>
           )}
         </div>
+
+        <button
+          onClick={handleRefreshModels}
+          disabled={connectionStatus !== 'connected' || isRefreshing}
+          className="p-1.5 rounded-lg bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 hover:bg-white/70 dark:hover:bg-gray-800/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Refresh model list"
+        >
+          {isRefreshing ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
+        </button>
       </div>
 
-      {/* Right section with fixed width */}
-      <div className="flex items-center gap-4 w-[500px] justify-end">
+      {/* Right section with actions */}
+      <div className="flex items-center gap-2">
+        {/* Connection Status */}
+        <div className="flex items-center gap-2">
+          {connectionStatus === 'checking' ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-100/50 dark:bg-yellow-900/30">
+              <Bot className="w-4 h-4 text-yellow-500 animate-spin" />
+              <span className="text-sm text-yellow-700 dark:text-yellow-400">Checking...</span>
+            </div>
+          ) : connectionStatus === 'connected' ? (
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Connected" />
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-100/50 dark:bg-red-900/30">
+              <AlertCircle className="w-4 h-4 text-red-500" />
+              <span className="text-sm text-red-700 dark:text-red-400">Disconnected</span>
+            </div>
+          )}
+        </div>
+
+        {/* Knowledge Base Button */}
         <button
           onClick={onOpenKnowledgeBase}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 hover:bg-white/70 dark:hover:bg-gray-800/70 transition-colors whitespace-nowrap"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/5"
           title="Knowledge Base"
         >
-          <Database className="w-5 h-5" />
-          <span className="text-sm font-medium">Knowledge Base</span>
+          <Database className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+          <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">Knowledge Base</span>
         </button>
 
-        <button 
+        {/* Tools Button */}
+        <button
+          onClick={onOpenTools}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/5"
+          title="Tools"
+        >
+          <Wrench className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+          <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">Tools</span>
+        </button>
+
+        {/* Theme Toggle */}
+        <button
           onClick={toggleTheme}
-          className="p-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/10 transition-colors"
-          aria-label="Toggle theme"
+          className="p-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-100/5"
+          title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         >
           {isDark ? (
-            <Sun className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <Sun className="w-4 h-4 text-gray-700 dark:text-gray-300" />
           ) : (
-            <Moon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <Moon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
           )}
         </button>
 
-        <UserProfileButton
-          userName={userName || 'Profile'}
+        {/* User Profile */}
+        <UserProfileButton 
+          userName={userName} 
           onPageChange={onPageChange}
         />
       </div>

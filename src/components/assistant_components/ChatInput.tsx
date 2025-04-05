@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Image as ImageIcon,  StopCircle, Database, Send,  Mic, Loader2, Plus, X, Square, File, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Image as ImageIcon,  StopCircle, Database, Send,  Mic, Loader2, Plus, X, Square, File, AlertCircle, Wrench, Code } from 'lucide-react';
 import api from '../../services/api'; // Import the API service
+import type { Tool } from '../../db';
 
 interface ChatInputProps {
   input: string;
@@ -19,6 +20,8 @@ interface ChatInputProps {
   onTemporaryDocUpload?: (event: React.ChangeEvent<HTMLInputElement>) => void;
   temporaryDocs?: Array<{ id: string; name: string }>;
   onRemoveTemporaryDoc?: (id: string) => void;
+  tools?: Tool[];
+  onToolSelect?: (tool: Tool | null) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -38,10 +41,15 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onTemporaryDocUpload,
   temporaryDocs = [],
   onRemoveTemporaryDoc,
+  tools = [],
+  onToolSelect,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tempDocInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showToolSelector, setShowToolSelector] = useState(false);
+  const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const toolSelectorRef = useRef<HTMLDivElement>(null);
   
   // Voice recording states
   const [isRecording, setIsRecording] = useState(false);
@@ -62,6 +70,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   // Add state for microphone permission
   const [permissionState, setPermissionState] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+
+  // Add state for tool search
+  const [toolSearchQuery, setToolSearchQuery] = useState('');
+  const filteredTools = useMemo(() => {
+    if (!toolSearchQuery) return tools;
+    const query = toolSearchQuery.toLowerCase();
+    return tools.filter(tool => 
+      tool.name.toLowerCase().includes(query)
+    );
+  }, [tools, toolSearchQuery]);
 
   // Get API endpoint on component mount
   useEffect(() => {
@@ -389,13 +407,42 @@ const ChatInput: React.FC<ChatInputProps> = ({
   // Create a modified handleSend function that resets the textarea height
   const handleSendWithReset = () => {
     handleSend();
-    // Reset the textarea height after sending
+    setInput('');
+    // Clear tool selection after sending
+    setSelectedTool(null);
+    onToolSelect?.(null);
+  };
+
+  // Update local state when parent state changes
+  useEffect(() => {
+    if (!tools.some(t => t.id === selectedTool?.id)) {
+      setSelectedTool(null);
+    }
+  }, [tools]);
+
+  // Handle tool selection
+  const handleToolClick = (tool: Tool) => {
+    setSelectedTool(tool);
+    onToolSelect?.(tool);
+    setShowToolSelector(false);
+    
     if (textareaRef.current) {
-      setTimeout(() => {
-        textareaRef.current.style.height = 'auto';
-      }, 0);
+      textareaRef.current.focus();
     }
   };
+
+  // Clear selected tool
+  const clearSelectedTool = () => {
+    setSelectedTool(null);
+    onToolSelect?.(null);
+  };
+
+  // Clean up tool selection when input is cleared
+  useEffect(() => {
+    if (!input && selectedTool) {
+      clearSelectedTool();
+    }
+  }, [input]);
 
   // Handle keyboard recording (Ctrl key)
   useEffect(() => {
@@ -433,6 +480,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [isRecording, isTranscribing, isKeyboardRecording, isProcessing, handleSend]);
+
+  // Close tool selector when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (toolSelectorRef.current && !toolSelectorRef.current.contains(event.target as Node)) {
+        setShowToolSelector(false);
+        setToolSearchQuery(''); // Reset search when closing
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Clean up on unmount
   useEffect(() => {
@@ -542,6 +602,38 @@ const ChatInput: React.FC<ChatInputProps> = ({
           <div className="flex justify-between items-center">
             {/* Left Side Actions */}
             <div className="flex items-center gap-2">
+              {/* Tool Selector */}
+              <div className="relative" ref={toolSelectorRef}>
+                <button 
+                  className={`group p-2 rounded-lg transition-colors relative ${
+                    selectedTool 
+                      ? 'bg-sakura-500 text-white hover:bg-sakura-600' 
+                      : 'hover:bg-sakura-50 dark:hover:bg-sakura-100/5 text-gray-600 dark:text-gray-400'
+                  }`}
+                  onClick={() => setShowToolSelector(!showToolSelector)}
+                  title={selectedTool ? `Using: ${selectedTool.name}` : 'Select Tool'}
+                >
+                  <Wrench className="w-5 h-5" />
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-0.5 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                    {selectedTool ? `Using: ${selectedTool.name}` : 'Select Tool'}
+                  </div>
+                </button>
+              </div>
+
+              {/* Selected Tool Indicator */}
+              {selectedTool && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-sakura-500 text-white rounded-lg">
+                  <Code className="w-4 h-4" />
+                  <span className="text-sm">{selectedTool.name}</span>
+                  <button 
+                    onClick={clearSelectedTool}
+                    className="ml-1 p-1 rounded-full hover:bg-sakura-600 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
               {/* Hide the New Chat button by adding the hidden class */}
               <button
                 onClick={onNewChat}
@@ -687,6 +779,73 @@ const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Tool Selector Modal */}
+      {showToolSelector && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" onClick={() => {
+            setShowToolSelector(false);
+            setToolSearchQuery('');
+          }} />
+          <div ref={toolSelectorRef} className="relative w-full max-w-sm bg-white dark:bg-gray-800 rounded-lg shadow-xl">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Select Tool</h3>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={toolSearchQuery}
+                  onChange={(e) => setToolSearchQuery(e.target.value)}
+                  placeholder="Search tools..."
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sakura-500"
+                  autoFocus
+                />
+              </div>
+            </div>
+            
+            {/* Tool List */}
+            <div className="p-2 max-h-[40vh] overflow-y-auto">
+              {filteredTools.length > 0 ? (
+                <div className="grid grid-cols-1 gap-1">
+                  {filteredTools.map(tool => (
+                    <button
+                      key={tool.id}
+                      onClick={() => {
+                        handleToolClick(tool);
+                        setToolSearchQuery('');
+                      }}
+                      className="w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-2 group"
+                    >
+                      <Code className="w-4 h-4 text-gray-500 group-hover:text-sakura-500" />
+                      <div>
+                        <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{tool.name}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">{tool.description}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 text-center text-gray-500 dark:text-gray-400">
+                  No tools found
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+              <button
+                onClick={() => {
+                  setShowToolSelector(false);
+                  setToolSearchQuery('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -4,6 +4,8 @@ import { db } from '../../db';
 import { OllamaClient } from '../../utils';
 import { indexedDBService } from '../../services/indexedDB';
 import ModelPullModal from './ModelPullModal';
+import { ToolManager } from './ToolManager';
+import type { APIConfig } from '../../db';
 
 interface ModelConfig {
   name: string;
@@ -17,13 +19,15 @@ interface AssistantSettingsProps {
   onClose: () => void;
   isStreaming: boolean;
   setIsStreaming: (value: boolean) => void;
+  onOpenTools: () => void;
 }
 
 const AssistantSettings: React.FC<AssistantSettingsProps> = ({
   isOpen,
   onClose,
   isStreaming,
-  setIsStreaming
+  setIsStreaming,
+  onOpenTools
 }) => {
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,6 +38,8 @@ const AssistantSettings: React.FC<AssistantSettingsProps> = ({
   const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [isUsingDefault, setIsUsingDefault] = useState(true);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [apiConfig, setApiConfig] = useState<APIConfig | null>(null);
 
   const loadModels = async () => {
     setIsLoading(true);
@@ -138,6 +144,20 @@ const AssistantSettings: React.FC<AssistantSettingsProps> = ({
     loadSettings();
   }, []);
 
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const config = await db.getAPIConfig();
+        if (config && config.api_type) {
+          setApiConfig(config as APIConfig);
+        }
+      } catch (err) {
+        console.error('Failed to load API config:', err);
+      }
+    };
+    loadConfig();
+  }, []);
+
   const handleModelConfigChange = (modelName: string, supportsImages: boolean) => {
     const updatedConfigs = modelConfigs.map(config =>
       config.name === modelName ? { ...config, supportsImages } : config
@@ -188,7 +208,7 @@ const AssistantSettings: React.FC<AssistantSettingsProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="glassmorphic rounded-2xl p-8 max-w-2xl w-full mx-4 space-y-6">
+      <div className="glassmorphic rounded-2xl p-8 max-w-2xl w-full mx-4 space-y-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <SettingsIcon className="w-6 h-6 text-sakura-500" />
@@ -233,49 +253,45 @@ const AssistantSettings: React.FC<AssistantSettingsProps> = ({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-900 dark:text-white">
-                Response Settings
-              </h3>
-              
-              {apiType === 'ollama' ? (
-                <button
-                  onClick={() => setShowPullModal(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-sakura-500 text-white hover:bg-sakura-600 transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  Download Models
-                </button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">
-                    Model downloads available with Ollama
-                  </span>
-                  <button
-                    disabled
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-gray-300 text-gray-500 cursor-not-allowed"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Models
-                  </button>
-                </div>
-              )}
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                className="sr-only peer"
-                checked={isStreaming}
-                onChange={(e) => {
-                  setIsStreaming(e.target.checked);
-                  localStorage.setItem('assistant_streaming', e.target.checked.toString());
-                }}
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-sakura-300 dark:peer-focus:ring-sakura-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-sakura-500"></div>
-              <span className="ml-3 text-sm font-medium text-gray-700 dark:text-gray-300">
-                Streaming Responses
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+              Tools
+            </h3>
+            <button
+              onClick={() => {
+                onClose();
+                onOpenTools();
+              }}
+              className="w-full px-4 py-2 text-sm font-medium text-white bg-sakura-500 rounded-lg hover:bg-sakura-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <Bot className="w-4 h-4" />
+              Manage Custom Tools
+            </button>
+            <p className="mt-1 text-xs text-gray-500">
+              Create and manage custom tools to extend the assistant's capabilities.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+              Streaming
+            </h3>
+            <div className="flex items-center gap-2">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isStreaming}
+                  onChange={(e) => setIsStreaming(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-sakura-300 dark:peer-focus:ring-sakura-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-sakura-500"></div>
+              </label>
+              <span className="text-sm text-gray-700 dark:text-gray-300">
+                Enable streaming responses
               </span>
-            </label>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              When enabled, responses will be streamed in real-time as they're generated.
+            </p>
           </div>
 
           <div>
@@ -288,18 +304,24 @@ const AssistantSettings: React.FC<AssistantSettingsProps> = ({
                   Configure which models can process images
                 </p>
               </div>
-              <button
-                onClick={loadModels}
-                disabled={isLoading}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadModels}
+                  className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  title="Refresh Models"
+                >
                   <RefreshCw className="w-4 h-4" />
+                </button>
+                {apiType === 'ollama' && (
+                  <button
+                    onClick={() => setShowPullModal(true)}
+                    className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    title="Pull New Model"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
                 )}
-                Refresh Models
-              </button>
+              </div>
             </div>
 
             {error ? (
