@@ -57,6 +57,7 @@ export interface PersonalInfo {
 export interface APIConfig {
   ollama_base_url: string;
   comfyui_base_url: string;
+  openai_base_url: string;
   openai_api_key ?: string;
   openrouter_api_key ?: string;
   api_type ?: string;

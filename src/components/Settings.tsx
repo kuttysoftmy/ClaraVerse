@@ -37,7 +37,8 @@ const Settings = () => {
         setApiConfig({
           ...savedApiConfig,
           openai_base_url: savedApiConfig.openai_base_url || 'https://api.openai.com/v1',
-          preferred_server: savedApiConfig.preferred_server || 'ollama'
+          ollama_base_url: savedApiConfig.ollama_base_url || 'http://localhost:11434',
+          api_type: savedApiConfig.api_type || 'ollama'
         });
       }
     };

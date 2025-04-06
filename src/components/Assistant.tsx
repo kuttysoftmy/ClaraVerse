@@ -5,10 +5,9 @@ import AssistantSettings from './assistant_components/AssistantSettings';
 import ImageWarning from './assistant_components/ImageWarning';
 import ModelWarning from './assistant_components/ModelWarning';
 import ModelPullModal from './assistant_components/ModelPullModal';
-import WhatsNewWidget from './assistant_components/WhatsNewWidget';
 import { db } from '../db';
 import { OllamaClient, ChatMessage, ChatRole } from '../utils';
-import type { Message, Chat, Tool, APIConfig } from '../db';
+import type { Message, Chat, Tool } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 
 // Add RequestOptions type definition
@@ -52,6 +51,7 @@ interface SearchResult {
 const MAX_CONTEXT_MESSAGES = 20;
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_TEMP_COLLECTIONS = 5; // Maximum number of temporary collections
+const PYTHON_BACKEND_HOST = '127.0.0.1';  // or 'localhost'
 
 const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -118,7 +118,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
 
     try {
       // Delete the collection through the API
-      await fetch(`http://127.0.0.1:${pythonPort}/collections/${collectionName}`, {
+      await fetch(`http://${PYTHON_BACKEND_HOST}:${pythonPort}/collections/${collectionName}`, {
         method: 'DELETE'
       });
       
@@ -262,7 +262,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           timestamp: timestamp
         }));
 
-        const response = await fetch(`http://127.0.0.1:${pythonPort}/documents/upload`, {
+        const response = await fetch(`http://${PYTHON_BACKEND_HOST}:${pythonPort}/documents/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -287,7 +287,17 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
   };
 
   const removeTemporaryDoc = async (docId: string) => {
-    setTemporaryDocs(prev => prev.filter(d => d.id !== docId));
+    const doc = temporaryDocs.find(d => d.id === docId);
+    if (!doc || !pythonPort) return;
+
+    try {
+      await fetch(`http://${PYTHON_BACKEND_HOST}:${pythonPort}/collections/${doc.collection}`, {
+        method: 'DELETE'
+      });
+      setTemporaryDocs(prev => prev.filter(d => d.id !== docId));
+    } catch (error) {
+      console.error('Error removing temporary document:', error);
+    }
   };
 
   useEffect(() => {
@@ -428,7 +438,8 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
           clientConfig = { type: 'ollama' };
         } else {
           baseUrl = config.api_type === 'openai' 
-            ? 'https://api.openai.com/v1'
+          // use owhat whwere was the url for open ai like
+            ? config.openai_base_url || 'https://api.openai.com/v1'
             : config.ollama_base_url || 'http://localhost:11434';
 
           clientConfig = {
@@ -547,7 +558,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       const tempResults = await Promise.all(
         temporaryDocs.map(async (doc) => {
           try {
-            const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+            const response = await fetch(`http://${PYTHON_BACKEND_HOST}:${pythonPort}/documents/search`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -577,7 +588,7 @@ const Assistant: React.FC<AssistantProps> = ({ onPageChange }) => {
       let defaultResults = { results: [] };
       if (temporaryDocs.length === 0 && ragEnabled) {
         try {
-          const response = await fetch(`http://0.0.0.0:${pythonPort}/documents/search`, {
+          const response = await fetch(`http://${PYTHON_BACKEND_HOST}:${pythonPort}/documents/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
