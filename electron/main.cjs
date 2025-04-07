@@ -6,6 +6,7 @@ const PythonSetup = require('./pythonSetup.cjs');
 const PythonBackendService = require('./pythonBackend.cjs');
 const { setupAutoUpdater } = require('./updateService.cjs');
 const SplashScreen = require('./splash.cjs');
+const os = require('os');
 
 // Configure the main process logger
 log.transports.file.level = 'info';
@@ -24,6 +25,20 @@ async function initializeApp() {
     // Show splash screen
     splash = new SplashScreen();
     splash.setStatus('Starting Clara...', 'info');
+    
+    // Check if we can write to the home directory
+    try {
+      const testPath = path.join(os.homedir(), '.clara-test');
+      fs.writeFileSync(testPath, 'test');
+      fs.unlinkSync(testPath);
+    } catch (error) {
+      log.error('Permission error:', error);
+      splash.setStatus('Error: Cannot write to home directory. Please check permissions.', 'error');
+      setTimeout(() => {
+        app.quit();
+      }, 5000);
+      return;
+    }
     
     // Always setup Python environment on first run
     splash.setStatus('Setting up Python environment...', 'info');

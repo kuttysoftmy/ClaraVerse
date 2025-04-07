@@ -19,7 +19,13 @@ class PythonBackendService extends EventEmitter {
     this.retryCount = 0;
     this.maxRetries = 3;
     this.healthCheckInterval = null;
-    this.status = 'stopped';
+    this.status = {
+      status: 'stopped',
+      port: null,
+      isReady: false,
+      retryCount: 0,
+      pid: null
+    };
     
     // Configure logger properly
     this.logger = {
@@ -47,162 +53,128 @@ class PythonBackendService extends EventEmitter {
   /**
    * Start the Python backend service
    */
-  async start(options = {}) {
-    if (this.process) {
-      this.logger.info('Python process already running');
-      return;
-    }
-
+  async start() {
     try {
-      this.status = 'starting';
-      this.emit('status-change', { status: 'starting' });
+      this.status.status = 'starting';
+      this.emit('status-change', this.status);
       
-      // Get available port
-      this.port = options.port || await this.findAvailablePort(8090, 8199);
-      this.logger.info(`Selected port ${this.port} for Python backend`);
+      // Get Python executable path
+      const pythonPath = await this.pythonSetup.getPythonPath();
       
-      // Get the Python executable - this could fail if pythonSetup hasn't completed yet
-      const pythonExe = await this.pythonSetup.getPythonPath();
+      // Determine backend script path
+      let backendPath;
+      if (process.env.NODE_ENV === 'development') {
+        backendPath = path.join(__dirname, '..', 'py_backend');
+      } else {
+        // In production, look in both possible locations
+        const possiblePaths = [
+          path.join(process.resourcesPath, 'py_backend'),
+          path.join(process.resourcesPath, 'app.asar.unpacked', 'py_backend')
+        ];
+        
+        for (const possiblePath of possiblePaths) {
+          if (fs.existsSync(path.join(possiblePath, 'main.py'))) {
+            backendPath = possiblePath;
+            break;
+          }
+        }
+        
+        if (!backendPath) {
+          throw new Error(`Python backend script not found in any of the expected locations: ${possiblePaths.join(', ')}`);
+        }
+      }
       
-      // Get the path to the Python backend
-      const isDev = process.env.NODE_ENV === 'development';
-      const isWin = process.platform === 'win32';
-      const isMac = process.platform === 'darwin';
+      // Select a port
+      this.port = await this.selectPort();
+      log.info(`Selected port ${this.port} for Python backend`);
       
-      const backendPath = isDev 
-        ? path.join(__dirname, '..', 'py_backend')
-        : isWin || isMac
-          ? path.join(process.resourcesPath, 'py_backend')
-          : path.join(process.resourcesPath, 'app.asar.unpacked', 'py_backend');
-      
+      // Start the Python backend
       const mainPyPath = path.join(backendPath, 'main.py');
-      
       if (!fs.existsSync(mainPyPath)) {
         throw new Error(`Python backend script not found: ${mainPyPath}`);
       }
-      
-      // Add more robust validation for Python environment
-      if (!pythonExe || typeof pythonExe !== 'string') {
-        throw new Error('Python executable path is invalid or not available. Environment setup may not be complete.');
-      }
-      
-      this.logger.info(`Starting Python backend from: ${mainPyPath} using Python: ${pythonExe}`);
       
       // Set environment variables
       const env = {
         ...process.env,
         PYTHONUNBUFFERED: '1',
         PYTHONIOENCODING: 'utf-8',
-        CLARA_PORT: this.port.toString()
+        PORT: this.port.toString()
       };
       
-      // Check if Python executable exists before spawning
-      if (!fs.existsSync(pythonExe)) {
-        throw new Error(`Python executable not found at: ${pythonExe}`);
-      }
-      
       // Start the process
-      this.process = spawn(pythonExe, [mainPyPath], {
+      this.process = spawn(pythonPath, [mainPyPath], {
         cwd: backendPath,
         env,
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe']
       });
       
-      // Set up stdout handler
+      // Handle process events
       this.process.stdout.on('data', (data) => {
-        const output = data.toString().trim();
-        this.logger.info(`Python stdout: ${output}`);
+        const output = data.toString();
+        log.info(`Python backend: ${output}`);
         
-        // Check for port announcement in output
+        // Check for port announcement
         const portMatch = output.match(/CLARA_PORT:(\d+)/);
-        if (portMatch && portMatch[1]) {
+        if (portMatch) {
           this.port = parseInt(portMatch[1], 10);
-          this.logger.info(`Python service running on port: ${this.port}`);
           this.emit('port-detected', this.port);
         }
         
-        // Check for ready signal
+        // Check for startup complete
         if (output.includes('Application startup complete')) {
-          this.status = 'running';
           this.isReady = true;
-          this.retryCount = 0;
-          this.startHealthCheck();
+          this.status.status = 'running';
+          this.status.isReady = true;
+          this.status.pid = this.process.pid;
+          this.status.port = this.port;
+          this.emit('status-change', this.status);
           this.emit('ready', { port: this.port });
-          this.emit('status-change', { status: 'running', port: this.port });
         }
       });
       
-      // Set up stderr handler
       this.process.stderr.on('data', (data) => {
-        const output = data.toString().trim();
+        const output = data.toString();
         
         // Only log real errors, filter out normal uvicorn startup info
         if (!output.startsWith('INFO:') && !output.includes('Uvicorn running')) {
-          this.logger.error(`Python stderr: ${output}`);
+          log.error(`Python backend error: ${output}`);
+          this.emit('error', new Error(output));
         } else {
-          this.logger.debug(`Python stderr: ${output}`);
-        }
-        
-        // Check for startup complete message in stderr (uvicorn logs to stderr)
-        if (output.includes('Application startup complete')) {
-          this.status = 'running';
-          this.isReady = true;
-          this.retryCount = 0;
-          this.startHealthCheck();
-          this.emit('ready', { port: this.port });
-          this.emit('status-change', { status: 'running', port: this.port });
-        }
-      });
-      
-      // Handle process exit
-      this.process.on('exit', (code, signal) => {
-        this.logger.info(`Python process exited with code ${code} and signal ${signal}`);
-        
-        this.stopHealthCheck();
-        this.process = null;
-        this.isReady = false;
-        
-        if (this.status !== 'stopping') {
-          this.status = 'crashed';
-          this.emit('status-change', { status: 'crashed', code, signal });
+          log.info(`Python backend: ${output}`);
           
-          // Auto-restart on crash (with limits)
-          if (this.retryCount < this.maxRetries) {
-            this.retryCount++;
-            this.logger.info(`Attempting to restart Python backend (${this.retryCount}/${this.maxRetries})`);
-            setTimeout(() => this.start(), 2000);
-          } else {
-            this.status = 'failed';
-            this.emit('status-change', { status: 'failed', message: 'Maximum retry attempts reached' });
+          // Check for startup complete in stderr (uvicorn logs to stderr)
+          if (output.includes('Application startup complete')) {
+            this.isReady = true;
+            this.status.status = 'running';
+            this.status.isReady = true;
+            this.status.pid = this.process.pid;
+            this.status.port = this.port;
+            this.emit('status-change', this.status);
+            this.emit('ready', { port: this.port });
           }
-        } else {
-          this.status = 'stopped';
-          this.emit('status-change', { status: 'stopped' });
         }
       });
       
-      // Handle process error
-      this.process.on('error', (error) => {
-        this.logger.error(`Python process error: ${error.message}`);
-        this.emit('error', error);
-      });
-      
-      // Set up timeout for startup
-      setTimeout(() => {
-        if (this.status === 'starting') {
-          this.logger.warn('Python backend startup timeout');
-          this.status = 'timeout';
-          this.emit('status-change', { status: 'timeout' });
-          // Continue running - don't kill the process, it might still start up
+      this.process.on('close', (code) => {
+        log.info(`Python backend process exited with code ${code}`);
+        this.status.status = code === 0 ? 'stopped' : 'crashed';
+        this.status.isReady = false;
+        this.status.pid = null;
+        this.emit('status-change', this.status);
+        
+        if (code !== 0 && this.retryCount < this.maxRetries) {
+          this.retryCount++;
+          log.info(`Retrying Python backend (attempt ${this.retryCount}/${this.maxRetries})`);
+          setTimeout(() => this.start(), 2000);
         }
-      }, 30000);
-      
-      return { port: this.port };
+      });
       
     } catch (error) {
-      this.logger.error(`Failed to start Python backend: ${error.message}`);
-      this.status = 'failed';
-      this.emit('status-change', { status: 'failed', error: error.message });
+      log.error(`Failed to start Python backend: ${error.message}`);
+      this.status.status = 'failed';
+      this.status.error = error.message;
+      this.emit('status-change', this.status);
       throw error;
     }
   }
@@ -217,8 +189,8 @@ class PythonBackendService extends EventEmitter {
     }
     
     this.logger.info('Stopping Python backend');
-    this.status = 'stopping';
-    this.emit('status-change', { status: 'stopping' });
+    this.status.status = 'stopping';
+    this.emit('status-change', this.status);
     this.stopHealthCheck();
     
     // Graceful shutdown with timeout
@@ -238,8 +210,9 @@ class PythonBackendService extends EventEmitter {
           clearTimeout(killTimeout);
           this.process = null;
           this.isReady = false;
-          this.status = 'stopped';
-          this.emit('status-change', { status: 'stopped' });
+          this.status.status = 'stopped';
+          this.status.pid = null;
+          this.emit('status-change', this.status);
           resolve();
         });
         
@@ -255,8 +228,8 @@ class PythonBackendService extends EventEmitter {
   /**
    * Find an available port in the specified range
    */
-  async findAvailablePort(startPort, endPort) {
-    for (let port = startPort; port <= endPort; port++) {
+  async selectPort() {
+    for (let port = 8090; port <= 8199; port++) {
       try {
         await new Promise((resolve, reject) => {
           const server = net.createServer();
@@ -275,7 +248,7 @@ class PythonBackendService extends EventEmitter {
       }
     }
     
-    throw new Error(`No available ports found between ${startPort} and ${endPort}`);
+    throw new Error('No available ports found between 8090 and 8199');
   }
 
   /**
@@ -361,13 +334,7 @@ class PythonBackendService extends EventEmitter {
    * Get the current status
    */
   getStatus() {
-    return {
-      status: this.status,
-      port: this.port,
-      isReady: this.isReady,
-      retryCount: this.retryCount,
-      pid: this.process ? this.process.pid : null
-    };
+    return this.status;
   }
 }
 

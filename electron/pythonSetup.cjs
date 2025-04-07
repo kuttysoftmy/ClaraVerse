@@ -13,18 +13,10 @@ class PythonSetup {
     this.app = electron.app;
     this.isDevMode = process.env.NODE_ENV === 'development';
     
-    if (this.isDevMode) {
-      // In development, use user's home directory for persistent storage
-      this.appDataPath = path.join(os.homedir(), '.clara');
-      this.envPath = path.join(this.appDataPath, 'python-env');
-      this.initPath = path.join(this.appDataPath, '.initialized');
-    } else {
-      // In production, use bundled Python runtime from resources
-      this.appDataPath = path.join(process.resourcesPath, 'clara-data'); 
-      this.envPath = path.join(process.resourcesPath, 'python-env');
-      // In production mode, .initialized file is not used as the bundled runtime is prepackaged
-      this.initPath = path.join(this.appDataPath, '.initialized');
-    }
+    // Always use user's home directory for persistent storage
+    this.appDataPath = path.join(os.homedir(), '.clara');
+    this.envPath = path.join(this.appDataPath, 'python-env');
+    this.initPath = path.join(this.appDataPath, '.initialized');
     
     // Platform-specific paths
     if (process.platform === 'win32') {
@@ -35,7 +27,7 @@ class PythonSetup {
 
     // Create app data directory if it doesn't exist
     if (!fs.existsSync(this.appDataPath)) {
-      fs.mkdirSync(this.appDataPath, { recursive: true });
+      fs.mkdirSync(this.appDataPath, { recursive: true, mode: 0o755 });
     }
 
     // Initialize a flag to force bundled Python usage
