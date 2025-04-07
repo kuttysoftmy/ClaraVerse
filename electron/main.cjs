@@ -7,6 +7,8 @@ const PythonBackendService = require('./pythonBackend.cjs');
 const { setupAutoUpdater } = require('./updateService.cjs');
 const SplashScreen = require('./splash.cjs');
 const os = require('os');
+const { spawn } = require('child_process');
+const net = require('net');
 
 // Configure the main process logger
 log.transports.file.level = 'info';
@@ -283,6 +285,100 @@ ipcMain.handle('check-python-backend', async () => {
     log.error(`Error checking Python backend: ${error.message}`);
     return { status: 'error', error: error.message };
   }
+});
+
+// Add this after the existing IPC handlers
+ipcMain.handle('check-node-installation', async () => {
+  return new Promise((resolve) => {
+    const checkNode = spawn('node', ['-v']);
+    const checkNpm = spawn('npm', ['-v']);
+    
+    let nodeVersion = '';
+    let npmVersion = '';
+    let error = null;
+
+    checkNode.stdout.on('data', (data) => {
+      nodeVersion = data.toString().trim();
+    });
+
+    checkNode.stderr.on('data', (data) => {
+      error = data.toString();
+    });
+
+    checkNpm.stdout.on('data', (data) => {
+      npmVersion = data.toString().trim();
+    });
+
+    checkNpm.stderr.on('data', (data) => {
+      error = data.toString();
+    });
+
+    checkNode.on('close', () => {
+      checkNpm.on('close', () => {
+        if (error) {
+          resolve({ 
+            installed: false, 
+            error: 'Node.js or npm not found. Please install Node.js first.' 
+          });
+        } else {
+          resolve({ 
+            installed: true, 
+            nodeVersion, 
+            npmVersion 
+          });
+        }
+      });
+    });
+  });
+});
+
+// Add this after the check-node-installation handler
+ipcMain.handle('install-n8n', async (event) => {
+  return new Promise((resolve, reject) => {
+    const installProcess = spawn('npx', ['n8n'], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    installProcess.stdout.on('data', (data) => {
+      event.sender.send('n8n-install-output', { type: 'stdout', data: data.toString() });
+    });
+
+    installProcess.stderr.on('data', (data) => {
+      event.sender.send('n8n-install-output', { type: 'stderr', data: data.toString() });
+    });
+
+    installProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve({ success: true });
+      } else {
+        reject({ success: false, error: 'Installation failed' });
+      }
+    });
+
+    installProcess.on('error', (err) => {
+      reject({ success: false, error: err.message });
+    });
+  });
+});
+
+// Add this after the existing IPC handlers
+ipcMain.handle('check-n8n-running', async () => {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Port is in use, n8n is likely running
+        resolve({ running: true });
+      } else {
+        resolve({ running: false });
+      }
+    });
+    server.once('listening', () => {
+      server.close();
+      resolve({ running: false });
+    });
+    server.listen(5678);
+  });
 });
 
 // App lifecycle events

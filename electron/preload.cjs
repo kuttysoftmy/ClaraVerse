@@ -69,6 +69,15 @@ contextBridge.exposeInMainWorld(
       if (validReceiveChannels.includes(channel)) {
         ipcRenderer.removeListener(channel, func);
       }
+    },
+    checkNodeInstallation: () => ipcRenderer.invoke('check-node-installation'),
+    installN8N: () => ipcRenderer.invoke('install-n8n'),
+    checkN8NRunning: () => ipcRenderer.invoke('check-n8n-running'),
+    onN8NInstallOutput: (callback) => {
+      ipcRenderer.on('n8n-install-output', (_, data) => callback(data));
+    },
+    removeN8NInstallOutputListener: () => {
+      ipcRenderer.removeAllListeners('n8n-install-output');
     }
   }
 );

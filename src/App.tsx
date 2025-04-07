@@ -12,6 +12,7 @@ import AppRunner from './components/AppRunner';
 import ImageGen from './components/ImageGen';
 import Gallery from './components/Gallery';
 import Help from './components/Help';
+import N8N from './components/N8N';
 import NodeRegistryDebug from './debug/NodeRegistryDebug';
 import ToolbarDebug from './debug/ToolbarDebug';
 import { db } from './db';
@@ -94,7 +95,7 @@ function App() {
         <div className="flex-1 flex flex-col">
           <Topbar userName={userInfo?.name} onPageChange={setActivePage} />
           
-          <main className="flex-1 p-6 overflow-auto">
+          <main className={`flex-1 overflow-auto ${activePage === 'n8n' ? 'p-0' : 'p-6'}`}>
             {(() => {
               switch (activePage) {
                 case 'settings':
@@ -105,6 +106,8 @@ function App() {
                   return <Apps onPageChange={setActivePage} />;
                 case 'help':
                   return <Help />;
+                case 'n8n':
+                  return <N8N />;
                 case 'dashboard':
                 default:
                   return <Dashboard onPageChange={setActivePage} />;

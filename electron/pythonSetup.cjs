@@ -249,24 +249,19 @@ class PythonSetup {
       ? path.join(__dirname, '..', 'py_backend', 'requirements.txt')
       : path.join(process.resourcesPath, 'py_backend', 'requirements.txt');
     
-    // Upgrade pip first to ensure latest version is used
-    progressCallback?.('Upgrading pip...');
-    await this.runCommand(this.pythonExe, ['-m', 'pip', 'install', '--upgrade', 'pip'], {
+    // First install uv using pip
+    progressCallback?.('Installing uv...');
+    await this.runCommand(this.pythonExe, [
+      '-m', 'pip', 'install', 'uv'
+    ], {
       progress: progressCallback
     });
     
-    // Install pip packages from requirements.txt with optimizations
+    // Then use uv to install packages
     progressCallback?.('Installing Python dependencies...');
-    
-    // Use optimization flags to speed up installation:
-    // --prefer-binary: Use pre-compiled wheels when available
-    // --no-cache-dir: Avoid caching packages (saves disk operations)
-    // Note: Removed -j flag as it's not supported in all pip versions
     await this.runCommand(this.pythonExe, [
-      '-m', 'pip', 'install', 
-      '-r', requirementsPath,
-      '--prefer-binary',
-      '--no-cache-dir'
+      '-m', 'uv', 'pip', 'install',
+      '--requirements', requirementsPath
     ], {
       progress: progressCallback
     });
