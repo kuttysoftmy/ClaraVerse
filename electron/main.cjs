@@ -9,6 +9,8 @@ const SplashScreen = require('./splash.cjs');
 const os = require('os');
 const { spawn } = require('child_process');
 const net = require('net');
+const https = require('https');
+const { execSync } = require('child_process');
 
 // Configure the main process logger
 log.transports.file.level = 'info';
@@ -18,6 +20,7 @@ log.info('Application starting...');
 let pythonBackend;
 let mainWindow;
 let splash;
+let n8nProcess = null;
 
 // Initialize Python setup
 const pythonSetup = new PythonSetup();
@@ -57,9 +60,8 @@ async function initializeApp() {
       
       if (status.status === 'running') {
         splash?.setStatus('Backend services started', 'success');
-        if (!mainWindow) {
-          createMainWindow();
-        }
+        // Start n8n setup after Python backend is running
+        setupN8N();
       } else if (status.status === 'failed' || status.status === 'crashed') {
         splash?.setStatus(`Backend error: ${status.message || status.status}`, 'error');
       }
@@ -73,9 +75,6 @@ async function initializeApp() {
       if (splash && !mainWindow) {
         splash.setStatus('Starting main application...', 'success');
         createMainWindow();
-        setTimeout(() => {
-          splash.close();
-        }, 1000);
       }
     });
     
@@ -128,7 +127,11 @@ function createMainWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: true,
+      partition: 'persist:n8n'
     },
     show: false,
     backgroundColor: '#f5f5f5'
@@ -156,8 +159,38 @@ function createMainWindow() {
     // Open DevTools automatically in development
     mainWindow.webContents.openDevTools();
   } else {
-    // Production mode - load built files
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Production mode - use development-like loading
+    const protocol = require('electron').protocol;
+    
+    // Register a secure protocol for loading files
+    protocol.registerFileProtocol('app', (request, callback) => {
+      const url = request.url.substr(6); // Remove 'app://'
+      const filePath = path.join(__dirname, '../dist', url);
+      log.info(`Loading file: ${filePath}`);
+      callback({ path: filePath });
+    });
+
+    // Load the main window using the app protocol
+    mainWindow.loadURL('app://index.html').catch(err => {
+      log.error('Failed to load app://index.html:', err);
+      // Fallback to direct file loading
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    });
+
+    // Enable web security but allow loading local resources
+    mainWindow.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: { ...details.requestHeaders } });
+    });
+
+    // Allow loading local resources
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Access-Control-Allow-Origin': ['*']
+        }
+      });
+    });
   }
 
   // Show window when ready
@@ -175,6 +208,14 @@ function createMainWindow() {
       log.info(`Sending initial backend status to renderer: ${JSON.stringify(status)}`);
       mainWindow.webContents.send('backend-status', status);
     }
+
+    // Close splash screen after main window is fully ready
+    setTimeout(() => {
+      if (splash) {
+        splash.close();
+        splash = null;
+      }
+    }, 1000);
   });
   
   mainWindow.on('closed', () => {
@@ -287,98 +328,267 @@ ipcMain.handle('check-python-backend', async () => {
   }
 });
 
-// Add this after the existing IPC handlers
-ipcMain.handle('check-node-installation', async () => {
-  return new Promise((resolve) => {
-    const checkNode = spawn('node', ['-v']);
-    const checkNpm = spawn('npm', ['-v']);
+// Add Node.js version check and installation
+async function checkAndInstallNode() {
+  try {
+    const nodeVersion = execSync('node -v').toString().trim();
+    const versionMatch = nodeVersion.match(/v(\d+)\.(\d+)\.(\d+)/);
     
-    let nodeVersion = '';
-    let npmVersion = '';
-    let error = null;
-
-    checkNode.stdout.on('data', (data) => {
-      nodeVersion = data.toString().trim();
-    });
-
-    checkNode.stderr.on('data', (data) => {
-      error = data.toString();
-    });
-
-    checkNpm.stdout.on('data', (data) => {
-      npmVersion = data.toString().trim();
-    });
-
-    checkNpm.stderr.on('data', (data) => {
-      error = data.toString();
-    });
-
-    checkNode.on('close', () => {
-      checkNpm.on('close', () => {
-        if (error) {
-          resolve({ 
-            installed: false, 
-            error: 'Node.js or npm not found. Please install Node.js first.' 
-          });
-        } else {
-          resolve({ 
-            installed: true, 
-            nodeVersion, 
-            npmVersion 
-          });
-        }
+    if (versionMatch) {
+      const major = parseInt(versionMatch[1]);
+      if (major >= 14) {
+        return { installed: true, version: nodeVersion };
+      }
+    }
+    
+    // If we get here, we need to install a newer version
+    const platform = process.platform;
+    const arch = process.arch;
+    
+    // Get the latest LTS version
+    const response = await new Promise((resolve, reject) => {
+      https.get('https://nodejs.org/dist/index.json', (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => resolve(JSON.parse(data)));
+        res.on('error', reject);
       });
     });
-  });
+    
+    const ltsVersion = response.find(v => v.lts).version;
+    
+    if (platform === 'linux') {
+      // For Linux, we'll download and extract Node.js directly
+      try {
+        // Create a directory in the user's home folder
+        const nodeDir = path.join(os.homedir(), '.clara-node');
+        if (!fs.existsSync(nodeDir)) {
+          fs.mkdirSync(nodeDir, { recursive: true });
+        }
+
+        // Download Node.js binary
+        const downloadUrl = `https://nodejs.org/dist/${ltsVersion}/node-${ltsVersion}-linux-x64.tar.xz`;
+        const archivePath = path.join(nodeDir, 'node.tar.xz');
+        
+        await new Promise((resolve, reject) => {
+          const file = fs.createWriteStream(archivePath);
+          https.get(downloadUrl, (res) => {
+            res.pipe(file);
+            file.on('finish', () => {
+              file.close();
+              resolve();
+            });
+          }).on('error', reject);
+        });
+
+        // Extract the archive
+        execSync(`tar -xf ${archivePath} -C ${nodeDir}`, { stdio: 'inherit' });
+        
+        // Clean up the archive
+        fs.unlinkSync(archivePath);
+        
+        // Add Node.js to PATH
+        const nodePath = path.join(nodeDir, `node-${ltsVersion}-linux-x64`, 'bin');
+        const envPath = process.env.PATH || '';
+        process.env.PATH = `${nodePath}:${envPath}`;
+        
+        // Verify installation
+        const newVersion = execSync('node -v').toString().trim();
+        return { installed: true, version: newVersion };
+      } catch (error) {
+        return { installed: false, error: error.message };
+      }
+    } else if (platform === 'win32') {
+      // Windows installation code (existing)
+      const downloadUrl = `https://nodejs.org/dist/${ltsVersion}/node-${ltsVersion}-${platform}-${arch}.msi`;
+      const installerPath = path.join(os.tmpdir(), 'node-installer.msi');
+      
+      await new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(installerPath);
+        https.get(downloadUrl, (res) => {
+          res.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            resolve();
+          });
+        }).on('error', reject);
+      });
+      
+      execSync(`msiexec /i "${installerPath}" /quiet`);
+      fs.unlinkSync(installerPath);
+      
+      return { installed: true, version: ltsVersion };
+    } else {
+      return { installed: false, error: `Unsupported platform: ${platform}` };
+    }
+  } catch (error) {
+    return { installed: false, error: error.message };
+  }
+}
+
+// Add the check-node-installation handler
+ipcMain.handle('check-node-installation', async () => {
+  try {
+    const result = await checkAndInstallNode();
+    
+    if (result.installed) {
+      const nodeVersion = execSync('node -v').toString().trim();
+      const npmVersion = execSync('npm -v').toString().trim();
+      
+      return {
+        installed: true,
+        nodeVersion,
+        npmVersion
+      };
+    } else {
+      return {
+        installed: false,
+        error: result.error || 'Failed to install Node.js',
+        nodeVersion: null,
+        npmVersion: null
+      };
+    }
+  } catch (error) {
+    return {
+      installed: false,
+      error: error.message,
+      nodeVersion: null,
+      npmVersion: null
+    };
+  }
 });
 
-// Add this after the check-node-installation handler
-ipcMain.handle('install-n8n', async (event) => {
-  return new Promise((resolve, reject) => {
-    const installProcess = spawn('npx', ['n8n'], {
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+// Add n8n setup function
+async function setupN8N() {
+  try {
+    splash?.setStatus('Setting up n8n...', 'info');
+    
+    // Kill any existing n8n process
+    if (n8nProcess) {
+      log.info('Killing existing n8n process...');
+      n8nProcess.kill('SIGTERM');
+      n8nProcess = null;
+      // Wait a moment for the process to fully terminate
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
 
-    installProcess.stdout.on('data', (data) => {
-      event.sender.send('n8n-install-output', { type: 'stdout', data: data.toString() });
-    });
+    // Check if port 5678 is in use and kill any process using it
+    try {
+      const portCheck = await checkN8NRunning();
+      if (portCheck.running) {
+        log.info('Port 5678 is in use, attempting to free it...');
+        // Try to find and kill the process using port 5678
+        if (process.platform === 'linux') {
+          try {
+            const pid = execSync(`lsof -i :5678 -t`).toString().trim();
+            if (pid) {
+              execSync(`kill -9 ${pid}`);
+              log.info(`Killed process ${pid} using port 5678`);
+              // Wait for port to be freed
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch (error) {
+            log.warn('Could not find process using port 5678:', error.message);
+          }
+        }
+      }
+    } catch (error) {
+      log.warn('Error checking port 5678:', error.message);
+    }
+    
+    // Check and install Node.js if needed
+    const nodeCheck = await checkAndInstallNode();
+    if (!nodeCheck.installed) {
+      throw new Error(nodeCheck.error);
+    }
+    
+    // Check if n8n is already installed
+    try {
+      execSync('n8n --version', { stdio: 'ignore' });
+      log.info('n8n is already installed');
+    } catch (error) {
+      // If n8n is not installed, install it
+      log.info('Installing n8n...');
+      execSync('npm install -g n8n', { stdio: 'inherit' });
+    }
 
-    installProcess.stderr.on('data', (data) => {
-      event.sender.send('n8n-install-output', { type: 'stderr', data: data.toString() });
-    });
+    // Create n8n config directory if it doesn't exist
+    const n8nConfigDir = path.join(os.homedir(), '.n8n');
+    if (!fs.existsSync(n8nConfigDir)) {
+      fs.mkdirSync(n8nConfigDir, { recursive: true });
+    }
 
-    installProcess.on('close', (code) => {
-      if (code === 0) {
-        resolve({ success: true });
-      } else {
-        reject({ success: false, error: 'Installation failed' });
+    // Create or update n8n config file
+    const n8nConfig = {
+      N8N_EDITOR_BASE_URL: 'http://localhost:5678',
+      N8N_ENDPOINT_WEBHOOK: 'http://localhost:5678/webhook',
+      N8N_HOST: 'localhost',
+      N8N_PORT: 5678,
+      N8N_PROTOCOL: 'http',
+      N8N_USER_FOLDER: n8nConfigDir,
+      N8N_CUSTOM_EXTENSIONS: path.join(n8nConfigDir, 'custom'),
+      N8N_DIAGNOSTICS_ENABLED: false,
+      N8N_METRICS: false,
+      N8N_PAYLOAD_SIZE_MAX: 16
+    };
+
+    // Write config to .env file
+    const envContent = Object.entries(n8nConfig)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n');
+    fs.writeFileSync(path.join(n8nConfigDir, '.env'), envContent);
+    
+    // Start n8n in a separate process with the config
+    n8nProcess = spawn('n8n', ['start'], {
+      stdio: 'inherit',
+      detached: true,
+      env: {
+        ...process.env,
+        ...n8nConfig
       }
     });
-
-    installProcess.on('error', (err) => {
-      reject({ success: false, error: err.message });
+    
+    // Handle process exit
+    n8nProcess.on('exit', (code) => {
+      console.log(`n8n process exited with code ${code}`);
+      n8nProcess = null;
     });
-  });
+    
+    splash?.setStatus('n8n is ready!', 'success');
+  } catch (error) {
+    log.error('Error setting up n8n:', error);
+    splash?.setStatus(`Error setting up n8n: ${error.message}`, 'error');
+  }
+}
+
+// Update the install-n8n handler to just check status
+ipcMain.handle('install-n8n', async () => {
+  try {
+    const status = await checkN8NRunning();
+    return { success: true, running: status.running };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
-// Add this after the existing IPC handlers
-ipcMain.handle('check-n8n-running', async () => {
+// Function to check if n8n is running
+function checkN8NRunning() {
   return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        // Port is in use, n8n is likely running
-        resolve({ running: true });
-      } else {
-        resolve({ running: false });
-      }
-    });
-    server.once('listening', () => {
-      server.close();
+    const client = new net.Socket();
+    client.on('error', () => {
+      client.destroy();
       resolve({ running: false });
     });
-    server.listen(5678);
+    client.connect(5678, '127.0.0.1', () => {
+      client.destroy();
+      resolve({ running: true });
+    });
   });
+}
+
+// Register IPC handlers
+ipcMain.handle('check-n8n-running', async () => {
+  return await checkN8NRunning();
 });
 
 // App lifecycle events
@@ -408,6 +618,10 @@ app.on('before-quit', async (event) => {
       log.error(`Error stopping Python backend: ${error.message}`);
     }
     app.exit(0);
+  }
+  if (n8nProcess) {
+    n8nProcess.kill();
+    n8nProcess = null;
   }
 });
 

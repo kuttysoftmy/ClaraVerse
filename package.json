@@ -145,7 +145,9 @@
         {
           "from": "electron/postinstall.sh",
           "to": "postinstall.sh",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     }
