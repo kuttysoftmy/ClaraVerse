@@ -193,13 +193,21 @@ const N8N = () => {
           <div className="relative w-full h-full m-0 p-0">
             {!iframeLoaded && (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-                <button
-                  onClick={() => setIframeLoaded(false)}
-                  className="flex items-center gap-2 px-4 py-2 bg-sakura-500 text-white rounded-lg hover:bg-sakura-600 transition-colors"
-                >
-                  <RotateCw className="w-5 h-5" />
-                  Reload N8N Interface
-                </button>
+                <div className="text-center space-y-4">
+                  <p className="text-gray-600 dark:text-gray-300">
+                    N8N interface is taking longer than expected to load.
+                  </p>
+                  <p className="text-gray-600 dark:text-gray-300">
+                    Please try pressing <span className="font-mono bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded">Ctrl + R</span> to refresh the page.
+                  </p>
+                  <button
+                    onClick={() => setIframeLoaded(false)}
+                    className="flex items-center gap-2 px-4 py-2 bg-sakura-500 text-white rounded-lg hover:bg-sakura-600 transition-colors"
+                  >
+                    <RotateCw className="w-5 h-5" />
+                    Reload N8N Interface
+                  </button>
+                </div>
               </div>
             )}
             <iframe

@@ -93,7 +93,7 @@ function App() {
         <Sidebar activePage={activePage} onPageChange={setActivePage} />
         
         <div className="flex-1 flex flex-col">
-          <Topbar userName={userInfo?.name} onPageChange={setActivePage} />
+          <Topbar userName={userInfo?.name} onPageChange={setActivePage} activePage={activePage} />
           
           <main className={`flex-1 overflow-auto ${activePage === 'n8n' ? 'p-0' : 'p-6'}`}>
             {(() => {
