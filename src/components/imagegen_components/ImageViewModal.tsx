@@ -7,7 +7,7 @@ interface ImageViewModalProps {
   syncGroup?: string;
 }
 
-const ImageViewModal: React.FC<ImageViewModalProps> = ({ imageUrl, onClose }) => {
+const ImageViewModal: React.FC<ImageViewModalProps> = ({ imageUrl, onClose, syncGroup = 'default' }) => {
   if (!imageUrl) return null;
 
   return (
@@ -19,11 +19,6 @@ const ImageViewModal: React.FC<ImageViewModalProps> = ({ imageUrl, onClose }) =>
         >
           <X className="w-6 h-6" />
         </button>
-        <img
-          src={imageUrl}
-          alt="Generated Image"
-          className="max-w-full max-h-full object-contain rounded-lg"
-        />
       </div>
     </div>
   );
