@@ -13,6 +13,7 @@ import CreateNotebookModal from './CreateNotebookModal';
 import NotebookDetails from './NotebookDetails';
 import { claraNotebookService, NotebookResponse, ProviderConfig } from '../../services/claraNotebookService';
 import { ProvidersProvider } from '../../contexts/ProvidersContext';
+import { db } from '../../db';
 
 const NotebooksContent: React.FC = () => {
   const [notebooks, setNotebooks] = useState<NotebookResponse[]>([]);
@@ -22,6 +23,7 @@ const NotebooksContent: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedNotebook, setSelectedNotebook] = useState<NotebookResponse | null>(null);
   const [isBackendHealthy, setIsBackendHealthy] = useState(false);
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
 
   // Subscribe to backend health changes
   useEffect(() => {
@@ -34,7 +36,19 @@ const NotebooksContent: React.FC = () => {
     if (isBackendHealthy) {
       loadNotebooks();
     }
+    loadWallpaper();
   }, [isBackendHealthy]);
+
+  const loadWallpaper = async () => {
+    try {
+      const wallpaper = await db.getWallpaper();
+      if (wallpaper) {
+        setWallpaperUrl(wallpaper);
+      }
+    } catch (error) {
+      console.error('Error loading wallpaper:', error);
+    }
+  };
 
   const loadNotebooks = async () => {
     if (!isBackendHealthy) {
@@ -144,9 +158,23 @@ const NotebooksContent: React.FC = () => {
   }
 
   return (
-    <div className="h-[94vh] flex flex-col bg-gray-50 dark:bg-black">
+    <div className="h-[94vh] flex flex-col bg-gray-50 dark:bg-black relative">
+      {/* Wallpaper */}
+      {wallpaperUrl && (
+        <div
+          className="absolute top-0 left-0 right-0 bottom-0 z-0"
+          style={{
+            backgroundImage: `url(${wallpaperUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: 0.1,
+            filter: 'blur(1px)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {/* Header - Fixed height */}
-      <div className="flex-shrink-0 bg-white dark:bg-black px-6 py-4 shadow-sm">
+      <div className="flex-shrink-0 bg-white dark:bg-black px-6 py-4 shadow-sm relative z-10">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <BookOpen className="h-6 w-6 text-sakura-500" />

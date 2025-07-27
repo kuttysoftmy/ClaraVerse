@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, User, Loader2, Trash2, Settings, ChevronDown, Zap, Server, Globe } from 'lucide-react';
 import { useProviders } from '../contexts/ProvidersContext';
 import { LumaUIAPIClient, ChatMessage as LumaChatMessage } from './lumaui_components/services/lumaUIApiClient';
+import { db } from '../db';
 
 interface Message {
   id: string;
@@ -37,6 +38,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ selectedFile, fileContent }) =>
   const [showSettings, setShowSettings] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [apiClient, setApiClient] = useState<LumaUIAPIClient | null>(null);
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +52,21 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ selectedFile, fileContent }) =>
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load wallpaper from IndexedDB on mount
+  useEffect(() => {
+    const loadWallpaper = async () => {
+      try {
+        const wallpaper = await db.getWallpaper();
+        if (wallpaper) {
+          setWallpaperUrl(wallpaper);
+        }
+      } catch (error) {
+        console.error('Error loading wallpaper:', error);
+      }
+    };
+    loadWallpaper();
+  }, []);
 
   // Initialize with primary provider
   useEffect(() => {
@@ -251,7 +268,21 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ selectedFile, fileContent }) =>
   }, [selectedProvider, selectedModel, apiClient, isAIConfigured, providers.length, availableModels.length]);
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-gray-800">
+    <div className="h-full flex flex-col bg-white dark:bg-gray-800 relative">
+      {/* Wallpaper */}
+      {wallpaperUrl && (
+        <div
+          className="absolute top-0 left-0 right-0 bottom-0 z-0"
+          style={{
+            backgroundImage: `url(${wallpaperUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: 0.1,
+            filter: 'blur(1px)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">

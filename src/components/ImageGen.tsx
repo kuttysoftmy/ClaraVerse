@@ -700,9 +700,21 @@ const ImageGen: React.FC<ImageGenProps> = ({ onPageChange }) => {
   // Add new state variables for the provider system
   const [providers, setProviders] = useState<ClaraProvider[]>([]);
   const [availableModels, setAvailableModels] = useState<ClaraModel[]>([]);
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
 
   // Connect to ComfyUI and fetch models, loras, vaes, and system stats
   useEffect(() => {
+    const loadWallpaper = async () => {
+      try {
+        const wallpaper = await db.getWallpaper();
+        if (wallpaper) {
+          setWallpaperUrl(wallpaper);
+        }
+      } catch (error) {
+        console.error('Error loading wallpaper:', error);
+      }
+    };
+    loadWallpaper();
     const connectAndFetch = async () => {
       try {
         setLoadingStatus(prev => ({ ...prev, connection: 'connecting' }));
@@ -1677,7 +1689,20 @@ const ImageGen: React.FC<ImageGenProps> = ({ onPageChange }) => {
   };
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen relative">
+      {wallpaperUrl && (
+        <div
+          className="absolute top-0 left-0 right-0 bottom-0 z-0"
+          style={{
+            backgroundImage: `url(${wallpaperUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: 0.1,
+            filter: 'blur(1px)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {!isInitialSetupComplete && (
         <InitialLoadingOverlay 
           loadingStatus={loadingStatus} 

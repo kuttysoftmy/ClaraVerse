@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { AgentFlow } from '../types/agent/types';
 import { agentWorkflowStorage } from '../services/agentWorkflowStorage';
+import { db } from '../db';
 
 interface AgentManagerProps {
   onPageChange: (page: string) => void;
@@ -18,10 +19,23 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onPageChange, onEditAgent, 
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadAgents();
+    loadWallpaper();
   }, []);
+
+  const loadWallpaper = async () => {
+    try {
+      const wallpaper = await db.getWallpaper();
+      if (wallpaper) {
+        setWallpaperUrl(wallpaper);
+      }
+    } catch (error) {
+      console.error('Error loading wallpaper:', error);
+    }
+  };
 
   const loadAgents = async () => {
     try {
@@ -125,10 +139,23 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onPageChange, onEditAgent, 
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden relative">
+      {wallpaperUrl && (
+        <div
+          className="absolute top-0 left-0 right-0 bottom-0 z-0"
+          style={{
+            backgroundImage: `url(${wallpaperUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: 0.1,
+            filter: 'blur(1px)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       <Sidebar activePage="agents" onPageChange={onPageChange} />
       
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 relative z-10">
         <Topbar userName={userName} onPageChange={onPageChange} />
         
         <div className="flex-1 bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 overflow-hidden">
